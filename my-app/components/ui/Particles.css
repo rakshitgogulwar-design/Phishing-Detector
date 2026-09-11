@@ -1,0 +1,12 @@
+.particles-container {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+}
+
+.particles-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}

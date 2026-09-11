@@ -2,7 +2,15 @@
   "builds": [
     {
       "src": "app/backend/main.py",
-      "use": "@vercel/python"
+      "use": "@vercel/python",
+      "config": {
+        "includeFiles": [
+          "app/frontend/**",
+          "models/**",
+          "data/**",
+          "src/**"
+        ]
+      }
     }
   ],
   "routes": [

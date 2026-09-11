@@ -1,0 +1,12 @@
+.liquidether-container {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+}
+
+.liquidether-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
