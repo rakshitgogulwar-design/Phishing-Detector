@@ -142,15 +142,58 @@ class SecurityExplainer:
         except Exception:
             self.shap_explainer = None
 
-    def explain_instance(self, features_dict: Dict[str, Any], prob_phishing: float) -> Dict[str, Any]:
+    def explain_instance(
+        self,
+        features_dict: Dict[str, Any],
+        prob_phishing: float,
+        continuous_stats: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """
         Produces an interpretable explanation for a single prediction instance.
         """
-        df_single = pd.DataFrame([features_dict])
-        
-        # Determine top risk factors based on security rules & SHAP
         risk_factors = []
         mitigating_factors = []
+
+        # Check continuous stats signals first
+        if continuous_stats:
+            brand_spoofed = continuous_stats.get("brand_spoofed")
+            if brand_spoofed:
+                risk_factors.append({
+                    "feature": "brand_impersonation",
+                    "value": -1,
+                    "title": f"Brand Impersonation ({brand_spoofed.upper()})",
+                    "description": f"URL attempts to spoof recognized brand '{brand_spoofed.capitalize()}' on an unverified host origin.",
+                    "severity": "Critical"
+                })
+            
+            if continuous_stats.get("is_high_risk_tld"):
+                tld = continuous_stats.get("tld", "")
+                risk_factors.append({
+                    "feature": "high_risk_tld",
+                    "value": -1,
+                    "title": f"High-Risk TLD (.{tld})",
+                    "description": f"Top-level domain '.{tld}' exhibits elevated incidence of automated phishing and malicious abuse.",
+                    "severity": "High"
+                })
+
+            kw_hits = continuous_stats.get("suspicious_keywords", [])
+            if len(kw_hits) >= 2:
+                risk_factors.append({
+                    "feature": "deceptive_keywords",
+                    "value": -1,
+                    "title": f"Credential Harvest Tokens ({len(kw_hits)} keywords)",
+                    "description": f"URL path and query strings embed high-risk credential keywords: {', '.join(kw_hits[:3])}.",
+                    "severity": "High"
+                })
+
+            if continuous_stats.get("is_trusted_domain") and not brand_spoofed:
+                mitigating_factors.append({
+                    "feature": "domain_authority",
+                    "value": 1,
+                    "title": "Verified High-Authority Domain",
+                    "description": f"Registered domain '{continuous_stats.get('domain')}' is in verified global top-authority trusted registries.",
+                    "severity": "Safe"
+                })
 
         for feat, val in features_dict.items():
             if feat in SECURITY_DESCRIPTIONS and val in SECURITY_DESCRIPTIONS[feat]:
@@ -178,7 +221,7 @@ class SecurityExplainer:
                 f"🚨 High-Confidence Phishing Attack Detected ({round(prob_phishing * 100, 1)}% Risk Probability). "
                 f"Multiple deceptive indicators detected including {', '.join([r['title'] for r in risk_factors[:2]])}."
             )
-        elif 0.40 <= prob_phishing < 0.70:
+        elif 0.38 <= prob_phishing < 0.70:
             verdict_badge = "SUSPICIOUS"
             summary_text = (
                 f"⚠️ Suspicious / Ambiguous Website ({round(prob_phishing * 100, 1)}% Risk Probability). "

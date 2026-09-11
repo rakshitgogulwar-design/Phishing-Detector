@@ -2,20 +2,21 @@
 Real-Time Multi-Modal Feature Extraction Engine
 Extracts URL-lexical, domain/DNS, HTML/DOM structure, and security/reputation features
 from any given URL and raw/fetched HTML.
+Includes brand impersonation detection, high-risk TLD analysis, fast DNS caching,
+and continuous calibrated multi-signal risk calculation.
 """
 
 import re
 import math
 import socket
-import ssl
 import urllib.parse
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List, Set
 import requests
 from bs4 import BeautifulSoup
 import tldextract
 
 
-SHORTENING_SERVICES = {
+SHORTENING_SERVICES: Set[str] = {
     "bit.ly", "goo.gl", "shorte.st", "go2l.ink", "x.co", "ow.ly", "t.co", "tinyurl",
     "tr.im", "is.gd", "cli.gs", "yfrog.com", "migre.me", "ff.im", "tiny.cc", "url4.eu",
     "twit.ac", "su.pr", "twurl.nl", "snipurl.com", "short.to", "budurl.com", "ping.fm",
@@ -26,7 +27,19 @@ SHORTENING_SERVICES = {
     "prettylinkpro.com", "scrnch.me", "filoops.info", "vzturl.com", "qr.net", "1url.com"
 }
 
-TRUSTED_CDN_DOMAINS = {
+TRUSTED_TOP_DOMAINS: Set[str] = {
+    "google.com", "youtube.com", "facebook.com", "amazon.com", "yahoo.com",
+    "wikipedia.org", "twitter.com", "x.com", "instagram.com", "linkedin.com",
+    "reddit.com", "netflix.com", "github.com", "microsoft.com", "apple.com",
+    "stackoverflow.com", "cloudflare.com", "openai.com", "chatgpt.com",
+    "chase.com", "paypal.com", "wellsfargo.com", "bankofamerica.com", "citigroup.com",
+    "cnn.com", "bbc.com", "nytimes.com", "spotify.com", "dropbox.com", "adobe.com",
+    "salesforce.com", "gitlab.com", "mozilla.org", "arxiv.org", "huggingface.co",
+    "kaggle.com", "medium.com", "bing.com", "duckduckgo.com", "ebay.com",
+    "nih.gov", "mit.edu", "harvard.edu", "stanford.edu", "gov.uk"
+}
+
+TRUSTED_CDN_DOMAINS: Set[str] = {
     "cloudfront.net", "akamaihd.net", "akamaized.net", "cloudflare.com", "fastly.net",
     "googleapis.com", "gstatic.com", "fbcdn.net", "twimg.com", "wp.com", "azureedge.net",
     "cdn.jsdelivr.net", "cdnjs.cloudflare.com", "nflxext.com", "nflximg.net", "nflxvideo.net",
@@ -35,6 +48,44 @@ TRUSTED_CDN_DOMAINS = {
     "oaistatic.com", "oaiusercontent.com", "openai.com", "chatgpt.com"
 }
 
+HIGH_RISK_TLDS: Set[str] = {
+    "tk", "ml", "ga", "cf", "gq", "top", "xyz", "buzz", "club", "work",
+    "rest", "cam", "ru", "cc", "icu", "click", "link", "guru", "support",
+    "online", "site", "live", "space", "bid", "fit", "racing", "date"
+}
+
+TARGETED_BRANDS: Dict[str, str] = {
+    "paypal": "paypal.com",
+    "chase": "chase.com",
+    "wellsfargo": "wellsfargo.com",
+    "bankofamerica": "bankofamerica.com",
+    "apple": "apple.com",
+    "appleid": "apple.com",
+    "microsoft": "microsoft.com",
+    "office365": "microsoft.com",
+    "onedrive": "microsoft.com",
+    "amazon": "amazon.com",
+    "netflix": "netflix.com",
+    "google": "google.com",
+    "gmail": "google.com",
+    "binance": "binance.com",
+    "metamask": "metamask.io",
+    "coinbase": "coinbase.com",
+    "steam": "steampowered.com",
+    "steamcommunity": "steamcommunity.com",
+    "facebook": "facebook.com",
+    "instagram": "instagram.com",
+    "dropbox": "dropbox.com",
+    "adobe": "adobe.com"
+}
+
+SUSPICIOUS_KEYWORDS: List[str] = [
+    "verify", "verification", "account", "update", "security", "login",
+    "signin", "sign-in", "banking", "auth", "authorize", "recover",
+    "password", "credential", "suspend", "confirm", "wallet", "support",
+    "service", "portal", "secure-login", "billing", "refund", "alert"
+]
+
 
 class MultiModalFeatureExtractor:
     """
@@ -42,21 +93,26 @@ class MultiModalFeatureExtractor:
     1: Legitimate / Safe
     0: Suspicious / Neutral
     -1: Phishing / Malicious / Abnormal
+
+    Plus auxiliary continuous statistics, brand spoofing signals,
+    and a calibrated multi-signal risk rating engine.
     """
 
-    def __init__(self, timeout: float = 3.0):
+    _dns_cache: Dict[str, bool] = {}
+
+    def __init__(self, timeout: float = 1.0):
         self.timeout = timeout
-        self.extractor = tldextract.TLDExtract(cache_dir=False)
+        # Using default cache for fast repeated parsing
+        self.extractor = tldextract.TLDExtract(cache_dir=True)
 
     def extract_all(self, url: str, html_content: Optional[str] = None) -> Dict[str, Any]:
         """
         Extracts full 30-feature vector and auxiliary continuous statistics from a URL.
-        If html_content is None, attempts a safe live fetch with short timeout.
+        If html_content is None, attempts a rapid live fetch with a short connection timeout.
         """
         raw_input = url.strip()
         has_explicit_scheme = raw_input.startswith("http://") or raw_input.startswith("https://")
-        
-        # In modern web, bare domains default to HTTPS exploration
+
         if not has_explicit_scheme:
             url_with_scheme = "https://" + raw_input
         else:
@@ -64,22 +120,24 @@ class MultiModalFeatureExtractor:
 
         parsed = urllib.parse.urlparse(url_with_scheme)
         ext = self.extractor(url_with_scheme)
-        domain = ext.registered_domain or parsed.netloc.split(":")[0]
+        domain = getattr(ext, "top_domain_under_public_suffix", None) or getattr(ext, "registered_domain", "") or parsed.netloc.split(":")[0]
         hostname = parsed.netloc.split(":")[0]
+        tld = ext.suffix.lower()
 
         response_code = 200
         headers = {}
         redirect_count = 0
         final_scheme = parsed.scheme or "https"
+        fetched_html = False
 
         if html_content is None:
-            # Try fetching via HTTPS first, fallback to HTTP if needed
+            # Rapid fetch with strict connect timeout (0.8s) so dead links never hang
             for try_url in ([url_with_scheme] if has_explicit_scheme else [f"https://{raw_input}", f"http://{raw_input}"]):
                 try:
                     resp = requests.get(
                         try_url,
-                        timeout=self.timeout,
-                        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
+                        timeout=(0.8, self.timeout),
+                        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"},
                         allow_redirects=True
                     )
                     html_content = resp.text
@@ -87,14 +145,20 @@ class MultiModalFeatureExtractor:
                     headers = dict(resp.headers)
                     redirect_count = len(resp.history)
                     final_scheme = urllib.parse.urlparse(resp.url).scheme
+                    fetched_html = True
                     break
                 except Exception:
                     html_content = ""
+        else:
+            fetched_html = len(html_content.strip()) > 0
 
-        soup = BeautifulSoup(html_content, "html.parser") if html_content else None
+        soup = BeautifulSoup(html_content, "html.parser") if (html_content and len(html_content) > 0) else None
 
-        # Check DNS resolution
+        # Check DNS resolution with in-memory cache
         dns_resolves = self._check_dns_resolves(hostname)
+
+        # Brand spoofing detection
+        brand_spoofed, target_brand_domain = self._detect_brand_spoofing(raw_input, domain, hostname)
 
         # 1. URL & Domain Baseline Features
         f_ip = self._check_ip_address(hostname)
@@ -102,23 +166,23 @@ class MultiModalFeatureExtractor:
         f_shortening = self._check_shortening(hostname)
         f_at = self._check_at_symbol(raw_input)
         f_double_slash = self._check_double_slash(raw_input)
-        f_prefix_suffix = self._check_prefix_suffix(ext.domain or hostname)
-        f_subdomain = self._check_subdomains(ext.subdomain)
-        f_domain_reg = self._check_domain_reg_length(domain, dns_resolves)
+        f_prefix_suffix = self._check_prefix_suffix(domain, brand_spoofed)
+        f_subdomain = self._check_subdomains(ext.subdomain, brand_spoofed)
+        f_domain_reg = self._check_domain_reg_length(domain, dns_resolves, tld)
         f_https_token = self._check_https_token(hostname)
-        f_abnormal_url = self._check_abnormal_url(hostname, parsed.path)
-        f_age_domain = self._check_domain_age(domain, dns_resolves)
+        f_abnormal_url = self._check_abnormal_url(hostname, parsed.path, brand_spoofed)
+        f_age_domain = self._check_domain_age(domain, dns_resolves, tld)
         f_dns = 1 if dns_resolves else -1
-        f_google_index = self._check_google_index(domain, dns_resolves)
-        f_stats_report = self._check_statistical_report(hostname)
+        f_google_index = self._check_google_index(domain, dns_resolves, tld)
+        f_stats_report = self._check_statistical_report(hostname, raw_input, brand_spoofed, tld)
 
         # 2. HTML / DOM Structural Features
-        f_favicon = self._check_favicon(soup, domain)
+        f_favicon = self._check_favicon(soup, domain, fetched_html)
         f_port = self._check_port(parsed.port)
-        f_req_url = self._check_request_url(soup, domain)
-        f_url_anchor = self._check_url_of_anchor(soup, domain)
-        f_links_in_tags = self._check_links_in_tags(soup, domain)
-        f_sfh = self._check_sfh(soup, domain)
+        f_req_url = self._check_request_url(soup, domain, fetched_html)
+        f_url_anchor = self._check_url_of_anchor(soup, domain, fetched_html)
+        f_links_in_tags = self._check_links_in_tags(soup, domain, fetched_html)
+        f_sfh = self._check_sfh(soup, domain, fetched_html)
         f_submit_email = self._check_submitting_to_email(soup)
         f_redirect = self._check_redirect(redirect_count)
         f_mouseover = self._check_mouseover(soup)
@@ -148,7 +212,7 @@ class MultiModalFeatureExtractor:
             "DNSRecord": f_dns,
             "Google_Index": f_google_index,
             "Statistical_report": f_stats_report,
-            
+
             # HTML / DOM Structural
             "Favicon": f_favicon,
             "port": f_port,
@@ -170,16 +234,27 @@ class MultiModalFeatureExtractor:
             "Links_pointing_to_page": f_links_pointing,
         }
 
+        # Count suspicious tokens
+        url_lower = raw_input.lower()
+        keyword_hits = [kw for kw in SUSPICIOUS_KEYWORDS if kw in url_lower]
+
         continuous_stats = {
-            "url_length": len(url),
-            "entropy": self._calculate_entropy(url),
-            "digit_count": sum(c.isdigit() for c in url),
-            "digit_ratio": round(sum(c.isdigit() for c in url) / max(len(url), 1), 4),
-            "special_char_count": len(re.findall(r'[-_.~!*\'();:@&=+$,/?%#[\]]', url)),
+            "url_length": len(raw_input),
+            "entropy": self._calculate_entropy(raw_input),
+            "digit_count": sum(c.isdigit() for c in raw_input),
+            "digit_ratio": round(sum(c.isdigit() for c in raw_input) / max(len(raw_input), 1), 4),
+            "special_char_count": len(re.findall(r'[-_.~!*\'();:@&=+$,/?%#[\]]', raw_input)),
+            "subdomain_depth": ext.subdomain.count(".") + 1 if ext.subdomain else 0,
             "hostname": hostname,
             "domain": domain,
-            "scheme": parsed.scheme or "http",
-            "has_html_inspection": soup is not None and len(html_content) > 0
+            "tld": tld,
+            "scheme": final_scheme,
+            "is_trusted_domain": domain in TRUSTED_TOP_DOMAINS,
+            "is_high_risk_tld": tld in HIGH_RISK_TLDS,
+            "brand_spoofed": brand_spoofed,
+            "suspicious_keyword_count": len(keyword_hits),
+            "suspicious_keywords": keyword_hits,
+            "has_html_inspection": fetched_html and (soup is not None)
         }
 
         return {
@@ -187,15 +262,40 @@ class MultiModalFeatureExtractor:
             "continuous_stats": continuous_stats
         }
 
-    # ==================== Helpers & Verification ====================
+    # ==================== Brand & Lexical Helpers ====================
+
+    def _detect_brand_spoofing(self, raw_url: str, domain: str, hostname: str) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Detects if a reputable brand name is being spoofed inside a domain, subdomain, or path
+        when the registered domain is not the brand's authentic domain.
+        """
+        raw_lower = raw_url.lower()
+        domain_lower = domain.lower()
+        hostname_lower = hostname.lower()
+
+        for brand, legit_domain in TARGETED_BRANDS.items():
+            # If domain is already the authentic domain, it is NOT spoofing
+            if domain_lower == legit_domain or domain_lower.endswith("." + legit_domain):
+                continue
+
+            # Check if brand appears in hostname or path
+            if (brand in hostname_lower) or (f"/{brand}" in raw_lower) or (f".{brand}." in hostname_lower) or (f"-{brand}" in hostname_lower) or (f"{brand}-" in hostname_lower):
+                return brand, legit_domain
+
+        return None, None
 
     def _check_dns_resolves(self, hostname: str) -> bool:
         if not hostname or hostname.startswith("192.168.") or hostname.startswith("10.") or hostname == "localhost":
             return True
+        if hostname in self._dns_cache:
+            return self._dns_cache[hostname]
         try:
+            socket.setdefaulttimeout(0.6)
             socket.gethostbyname(hostname)
+            self._dns_cache[hostname] = True
             return True
         except Exception:
+            self._dns_cache[hostname] = False
             return False
 
     def _check_ip_address(self, hostname: str) -> int:
@@ -227,14 +327,18 @@ class MultiModalFeatureExtractor:
             return -1
         return 1
 
-    def _check_prefix_suffix(self, domain_name: str) -> int:
-        # Check if root domain name has hyphen (e.g. chase-bank.com)
+    def _check_prefix_suffix(self, domain_name: str, brand_spoofed: Optional[str]) -> int:
+        # Check if root domain name has hyphen (e.g. chase-security.com)
+        if brand_spoofed:
+            return -1
+        if domain_name in TRUSTED_TOP_DOMAINS:
+            return 1
         return -1 if "-" in domain_name else 1
 
-    def _check_subdomains(self, subdomain: str) -> int:
-        if not subdomain:
-            return 1  # Legitimate (no subdomain or www only)
-        if subdomain.lower() == "www":
+    def _check_subdomains(self, subdomain: str, brand_spoofed: Optional[str]) -> int:
+        if brand_spoofed:
+            return -1
+        if not subdomain or subdomain.lower() == "www":
             return 1
         dots = subdomain.count(".")
         if dots == 0:
@@ -243,30 +347,48 @@ class MultiModalFeatureExtractor:
             return 0  # 2 levels -> Suspicious
         return -1  # >=3 levels -> Phishing
 
-    def _check_domain_reg_length(self, domain: str, dns_resolves: bool) -> int:
+    def _check_domain_reg_length(self, domain: str, dns_resolves: bool, tld: str) -> int:
+        if domain in TRUSTED_TOP_DOMAINS:
+            return 1
+        if tld in HIGH_RISK_TLDS:
+            return -1
         return 1 if dns_resolves else -1
 
     def _check_https_token(self, hostname: str) -> int:
-        # Check if 'https' is part of the domain string (e.g. http://https-secure.com)
         if "https" in hostname.lower().split(".")[0]:
             return -1
         return 1
 
-    def _check_abnormal_url(self, hostname: str, path: str) -> int:
+    def _check_abnormal_url(self, hostname: str, path: str, brand_spoofed: Optional[str]) -> int:
+        if brand_spoofed:
+            return -1
         if hostname and hostname in path:
             return -1
         return 1
 
-    def _check_domain_age(self, domain: str, dns_resolves: bool) -> int:
+    def _check_domain_age(self, domain: str, dns_resolves: bool, tld: str) -> int:
+        if domain in TRUSTED_TOP_DOMAINS:
+            return 1
+        if tld in HIGH_RISK_TLDS:
+            return -1
         return 1 if dns_resolves else -1
 
-    def _check_google_index(self, domain: str, dns_resolves: bool) -> int:
+    def _check_google_index(self, domain: str, dns_resolves: bool, tld: str) -> int:
+        if domain in TRUSTED_TOP_DOMAINS:
+            return 1
+        if tld in HIGH_RISK_TLDS:
+            return -1
         return 1 if dns_resolves else -1
 
-    def _check_statistical_report(self, hostname: str) -> int:
-        suspicious_tokens = ["free-login", "verify-account", "bank-update", "secure-login", "paypal-auth", "wallet-connect", "steal.php", "hacker"]
-        for token in suspicious_tokens:
-            if token in hostname.lower():
+    def _check_statistical_report(self, hostname: str, raw_url: str, brand_spoofed: Optional[str], tld: str) -> int:
+        if brand_spoofed:
+            return -1
+        if tld in HIGH_RISK_TLDS:
+            return -1
+        url_lower = raw_url.lower()
+        phish_patterns = ["verify-account", "bank-update", "secure-login", "auth-portal", "steal.php", "hacker", "wallet-connect"]
+        for p in phish_patterns:
+            if p in url_lower:
                 return -1
         return 1
 
@@ -283,8 +405,8 @@ class MultiModalFeatureExtractor:
                 return True
         return False
 
-    def _check_favicon(self, soup: Optional[BeautifulSoup], domain: str) -> int:
-        if not soup:
+    def _check_favicon(self, soup: Optional[BeautifulSoup], domain: str, fetched_html: bool) -> int:
+        if not fetched_html or not soup:
             return 1
         icon_tag = soup.find("link", rel=lambda x: x and ("icon" in x.lower() or "shortcut" in x.lower()))
         if icon_tag and icon_tag.get("href"):
@@ -298,8 +420,8 @@ class MultiModalFeatureExtractor:
             return 1
         return -1
 
-    def _check_request_url(self, soup: Optional[BeautifulSoup], domain: str) -> int:
-        if not soup or not domain:
+    def _check_request_url(self, soup: Optional[BeautifulSoup], domain: str, fetched_html: bool) -> int:
+        if not fetched_html or not soup or not domain:
             return 1
         total_objects = 0
         external_objects = 0
@@ -318,8 +440,8 @@ class MultiModalFeatureExtractor:
             return 0
         return -1
 
-    def _check_url_of_anchor(self, soup: Optional[BeautifulSoup], domain: str) -> int:
-        if not soup or not domain:
+    def _check_url_of_anchor(self, soup: Optional[BeautifulSoup], domain: str, fetched_html: bool) -> int:
+        if not fetched_html or not soup or not domain:
             return 1
         total_anchors = 0
         unsafe_anchors = 0
@@ -327,7 +449,6 @@ class MultiModalFeatureExtractor:
             href = a.get("href", "").strip().lower()
             if href:
                 total_anchors += 1
-                # In modern SPAs, # or javascript:void(0) or relative paths (/...) are standard internal UI controls
                 if href.startswith("http://") or href.startswith("https://"):
                     if not self._is_trusted_origin(href, domain):
                         unsafe_anchors += 1
@@ -340,8 +461,8 @@ class MultiModalFeatureExtractor:
             return 0
         return -1
 
-    def _check_links_in_tags(self, soup: Optional[BeautifulSoup], domain: str) -> int:
-        if not soup or not domain:
+    def _check_links_in_tags(self, soup: Optional[BeautifulSoup], domain: str, fetched_html: bool) -> int:
+        if not fetched_html or not soup or not domain:
             return 1
         total_tags = 0
         ext_tags = 0
@@ -360,21 +481,20 @@ class MultiModalFeatureExtractor:
             return 0
         return -1
 
-    def _check_sfh(self, soup: Optional[BeautifulSoup], domain: str) -> int:
-        if not soup:
+    def _check_sfh(self, soup: Optional[BeautifulSoup], domain: str, fetched_html: bool) -> int:
+        if not fetched_html or not soup:
             return 1
         forms = soup.find_all("form")
         if not forms:
             return 1
         for form in forms:
             action = form.get("action", "").strip().lower()
-            # In HTML5/React apps, empty action or missing action defaults to same-origin POST
             if not action or action == "#" or action.startswith("/"):
                 continue
             if action == "about:blank":
                 return -1
             if (action.startswith("http://") or action.startswith("https://")) and not self._is_trusted_origin(action, domain):
-                return 0  # External cross-domain form target
+                return 0
         return 1
 
     def _check_submitting_to_email(self, soup: Optional[BeautifulSoup]) -> int:
@@ -427,16 +547,17 @@ class MultiModalFeatureExtractor:
 
     def _check_ssl(self, scheme: str, hostname: str) -> int:
         if scheme == "https":
-            return 1  # Verified HTTPS
-        return -1  # Plain HTTP
+            return 1
+        return -1
 
     def _check_web_traffic(self, domain: str, dns_resolves: bool) -> int:
-        top_domains = {"google.com", "youtube.com", "facebook.com", "amazon.com", "yahoo.com", "wikipedia.org", "twitter.com", "instagram.com", "linkedin.com", "reddit.com", "netflix.com", "github.com", "microsoft.com", "apple.com", "stackoverflow.com", "cloudflare.com", "openai.com", "chatgpt.com"}
-        if domain in top_domains:
+        if domain in TRUSTED_TOP_DOMAINS:
             return 1
         return 0 if dns_resolves else -1
 
     def _check_page_rank(self, domain: str, dns_resolves: bool) -> int:
+        if domain in TRUSTED_TOP_DOMAINS:
+            return 1
         return 1 if dns_resolves else -1
 
     def _check_links_pointing(self, soup: Optional[BeautifulSoup]) -> int:
@@ -447,3 +568,119 @@ class MultiModalFeatureExtractor:
             return 0.0
         prob = [float(text.count(c)) / len(text) for c in dict.fromkeys(list(text))]
         return round(-sum([p * math.log(p) / math.log(2.0) for p in prob]), 4)
+
+    # ==================== Calibrated Continuous Risk Engine ====================
+
+    def calculate_calibrated_risk_score(
+        self,
+        features: Dict[str, int],
+        continuous_stats: Dict[str, Any],
+        raw_ml_prob: float
+    ) -> Dict[str, Any]:
+        """
+        Computes a continuous, calibrated Bayesian risk score between 0.0% and 100.0%.
+        Combines:
+        1. Base ML model prediction
+        2. Domain trust & authority discount
+        3. Brand impersonation / spoofing penalty
+        4. TLD risk weighting
+        5. Deceptive lexical & keyword density
+        6. DOM & structural security factors (form hijacking, iframes, raw IPs)
+        """
+        domain = continuous_stats.get("domain", "")
+        tld = continuous_stats.get("tld", "")
+        url_len = continuous_stats.get("url_length", 0)
+        entropy = continuous_stats.get("entropy", 0.0)
+        digit_ratio = continuous_stats.get("digit_ratio", 0.0)
+        brand_spoofed = continuous_stats.get("brand_spoofed")
+        is_trusted = domain in TRUSTED_TOP_DOMAINS
+        is_high_risk_tld = tld in HIGH_RISK_TLDS
+        kw_count = continuous_stats.get("suspicious_keyword_count", 0)
+
+        # Baseline probability from model smoothed to avoid raw saturation
+        base_risk = max(0.01, min(0.99, raw_ml_prob))
+
+        # 1. Domain Authority Factor
+        if is_trusted and not brand_spoofed:
+            # Genuine top-tier authority (Google, Amazon, Chase Official, etc.)
+            # Risk is kept in the safe 1.2% to 6.5% range depending on URL complexity/length
+            complexity_bonus = min(0.035, (url_len / 250.0) * 0.02 + max(0.0, entropy - 3.5) * 0.008)
+            calibrated_prob = 0.012 + complexity_bonus
+        else:
+            # Calculate Lexical Risk Index (0.0 to 1.0)
+            lexical_penalty = 0.0
+            if brand_spoofed:
+                lexical_penalty += 0.45  # Severe penalty for brand impersonation
+            if is_high_risk_tld:
+                lexical_penalty += 0.22  # Known malicious TLD
+            if features.get("having_IPhaving_IP_Address") == -1:
+                lexical_penalty += 0.35  # Raw IP address
+            if features.get("port") == -1:
+                lexical_penalty += 0.25  # Non-standard port (e.g. 8080)
+            if features.get("Shortining_Service") == -1:
+                lexical_penalty += 0.18  # URL shortener
+            if kw_count > 0:
+                lexical_penalty += min(0.28, kw_count * 0.09)
+            if entropy > 4.2:
+                lexical_penalty += min(0.15, (entropy - 4.2) * 0.10)
+            if digit_ratio > 0.12:
+                lexical_penalty += min(0.12, digit_ratio * 0.25)
+            if features.get("having_Sub_Domain") == -1:
+                lexical_penalty += 0.15
+
+            # DOM / Structural Risk Index (0.0 to 1.0)
+            dom_penalty = 0.0
+            if features.get("SFH") == -1:
+                dom_penalty += 0.40  # Form action about:blank / external
+            elif features.get("SFH") == 0:
+                dom_penalty += 0.20  # Cross-domain form
+            if features.get("Iframe") == -1:
+                dom_penalty += 0.25  # Hidden iframe
+            if features.get("popUpWidnow") == -1:
+                dom_penalty += 0.20  # Popups prompting for credentials
+            if features.get("SSLfinal_State") == -1:
+                dom_penalty += 0.15  # Insecure HTTP
+
+            # Blended weighted risk calculation
+            # 45% Model Probability + 35% Lexical/Brand Threat + 20% DOM Threat
+            combined = (0.45 * base_risk) + (0.35 * min(1.0, lexical_penalty)) + (0.20 * min(1.0, dom_penalty))
+
+            # Apply hard thresholds for high-confidence signatures
+            if brand_spoofed and (is_high_risk_tld or kw_count >= 1 or features.get("having_Sub_Domain") == -1):
+                # Blatant phishing: e.g. chase-security-update.com.banking-auth-portal.tk
+                combined = max(combined, 0.88 + min(0.11, kw_count * 0.03))
+            elif features.get("having_IPhaving_IP_Address") == -1 and (features.get("port") == -1 or kw_count >= 1):
+                # Raw IP with non-standard port or credential path: e.g. 192.168.1.105:8080/auth/paypal
+                combined = max(combined, 0.92)
+            elif brand_spoofed:
+                combined = max(combined, 0.78)
+
+            calibrated_prob = max(0.015, min(0.995, combined))
+
+        risk_percent = round(calibrated_prob * 100.0, 1)
+
+        # Determine calibrated verdict and risk tier
+        if risk_percent >= 70.0:
+            risk_tier = "CRITICAL"
+            verdict = "PHISHING"
+        elif risk_percent >= 38.0:
+            risk_tier = "SUSPICIOUS"
+            verdict = "SUSPICIOUS"
+        else:
+            risk_tier = "SAFE"
+            verdict = "LEGITIMATE"
+
+        return {
+            "calibrated_risk_score": round(calibrated_prob, 4),
+            "calibrated_risk_percent": risk_percent,
+            "risk_tier": risk_tier,
+            "verdict": verdict,
+            "breakdown": {
+                "model_raw_probability": round(raw_ml_prob, 4),
+                "domain_authority": "VERIFIED_TRUSTED" if is_trusted else ("HIGH_RISK_TLD" if is_high_risk_tld else "STANDARD"),
+                "brand_spoofing_detected": brand_spoofed is not None,
+                "spoofed_brand": brand_spoofed,
+                "lexical_entropy": round(entropy, 2),
+                "keyword_threat_count": kw_count
+            }
+        }

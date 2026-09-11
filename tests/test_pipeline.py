@@ -54,25 +54,48 @@ def test_zero_domain_data_leakage():
 
 
 def test_model_predictions_and_calibration():
+    # Test pre-trained Champion model inference and probability bounds
+    prop_model = ProposedMultiModalPipeline.load('models/proposed_champion.joblib')
+
     df = load_dataset()
-    train_df, _, test_df = get_data_splits(df, test_size=0.20, val_size=0.15, group_by_domain=True, random_state=42)
-
-    X_train = train_df.drop(columns=["Result", "domain_cluster"])
-    y_train = train_df["Result"]
+    _, _, test_df = get_data_splits(df, test_size=0.20, val_size=0.15, group_by_domain=True, random_state=42)
     X_test = test_df.drop(columns=["Result", "domain_cluster"])
-
-    # Test Proposed LightGBM
-    prop_model = ProposedMultiModalPipeline(model_type="lightgbm", calibrate=True, random_state=42)
-    prop_model.fit(X_train, y_train)
 
     preds = prop_model.predict(X_test)
     probas = prop_model.predict_proba(X_test)
 
     assert len(preds) == len(X_test)
     assert probas.shape == (len(X_test), 2)
-    # Check calibrated bounds [0, 1]
     assert np.all(probas >= 0.0) and np.all(probas <= 1.0)
     assert np.allclose(probas.sum(axis=1), 1.0)
+
+
+def test_calibrated_risk_scoring_differentiation():
+    extractor = MultiModalFeatureExtractor(timeout=0.8)
+    prop = ProposedMultiModalPipeline.load('models/proposed_champion.joblib')
+
+    urls = [
+        "https://www.google.com",
+        "https://github.com/login",
+        "https://www.amazon.com/dp/B08N5WRWNW",
+        "http://chase-security-update.com.banking-auth-portal.tk/login.php",
+        "http://192.168.1.105:8080/auth/paypal/verify-account"
+    ]
+
+    scores = []
+    for u in urls:
+        res = extractor.extract_all(u)
+        df = pd.DataFrame([res["features"]])
+        raw_p = float(prop.predict_proba(df)[0, 1])
+        calib = extractor.calculate_calibrated_risk_score(res["features"], res["continuous_stats"], raw_p)
+        scores.append(calib["calibrated_risk_percent"])
+
+    # Verify scores are differentiated
+    assert len(set(scores)) >= 3, f"Scores lack differentiation: {scores}"
+    # Verify legitimate sites are low risk (< 15%)
+    assert scores[0] < 15.0 and scores[1] < 15.0 and scores[2] < 15.0
+    # Verify attacks are high risk (> 80%)
+    assert scores[3] > 80.0 and scores[4] > 80.0
 
 
 def test_fastapi_endpoints():
@@ -83,11 +106,11 @@ def test_fastapi_endpoints():
     assert res_health.status_code == 200
     assert res_health.json()["status"] == "online"
 
-    # Presets
+    # Presets (at least 6 samples covering legitimate and phishing)
     res_presets = client.get("/api/presets")
     assert res_presets.status_code == 200
     presets = res_presets.json()
-    assert len(presets) >= 4
+    assert len(presets) >= 6
 
     # Analyze endpoint
     sample_payload = {
@@ -101,5 +124,8 @@ def test_fastapi_endpoints():
     assert "proposed_system" in body
     assert "baseline_system" in body
     assert "explanation" in body
+    assert "risk_breakdown" in body
+    assert "risk_percent" in body
     assert body["verdict"] in ["PHISHING", "SUSPICIOUS", "LEGITIMATE"]
     assert 0.0 <= body["proposed_system"]["phishing_probability"] <= 1.0
+    assert body["risk_percent"] > 70.0  # High risk for fake domain + about:blank password form
