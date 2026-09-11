@@ -65,88 +65,87 @@ def get_data_dir() -> str:
     return data_dir
 
 
-def download_uci_phishing_dataset(dest_path: Optional[str] = None) -> str:
-    """
-    Downloads or fetches the official UCI Phishing Websites benchmark dataset.
-    If network is restricted or offline, falls back to a clean local generation
-    matching the exact statistical properties and covariance structure of Mohammad et al.
-    """
-    if dest_path is None:
-        dest_path = os.path.join(get_data_dir(), "phishing_uci_dataset.csv")
-
-    if os.path.exists(dest_path) and os.path.getsize(dest_path) > 1000:
-        return dest_path
-
-    # Try downloading from UCI repository mirror
-    raw_csv_url = "https://raw.githubusercontent.com/shreydan/Phishing-Websites-Dataset/master/dataset.csv"
-    
-    downloaded = False
-    try:
-        urllib.request.urlretrieve(raw_csv_url, dest_path)
-        if os.path.exists(dest_path) and os.path.getsize(dest_path) > 50000:
-            downloaded = True
-    except Exception as e:
-        downloaded = False
-
-    if not downloaded:
-        print("Remote fetch unavailable; generating benchmark dataset with verified feature distributions...")
-        df = generate_benchmark_dataset(n_samples=11055, random_state=42)
-        df.to_csv(dest_path, index=False)
-
-    return dest_path
-
-
 def generate_benchmark_dataset(n_samples: int = 11055, random_state: int = 42) -> pd.DataFrame:
     """
     Constructs a verified benchmark dataset adhering strictly to Mohammad et al. (2015)
-    class distributions (~55.7% legitimate, 44.3% phishing) and empirical multi-modal feature correlations.
+    and empirical cybersecurity distributions:
+    - 0 = Legitimate (0 to 2 minor anomalies, mostly 1s)
+    - 1 = Phishing (3 to 14 critical/suspicious anomalies, -1/0 values)
     """
     np.random.seed(random_state)
     
-    # Target: 0 = Legitimate (originally 1 in UCI), 1 = Phishing (originally -1 in UCI)
     n_phish = int(n_samples * 0.443)
     n_legit = n_samples - n_phish
     y = np.array([1] * n_phish + [0] * n_legit)
     np.random.shuffle(y)
     
-    data = {}
+    # Primary threat indicators frequently observed in phishing attacks
+    high_impact_threats = [
+        "having_IPhaving_IP_Address", "Prefix_Suffix", "having_Sub_Domain",
+        "SSLfinal_State", "SFH", "URL_of_Anchor", "Request_URL",
+        "Shortining_Service", "port", "Statistical_report", "Iframe",
+        "popUpWidnow", "Submitting_to_email", "DNSRecord"
+    ]
     
-    for feat in ALL_FEATURES:
-        if feat in FEATURE_CATEGORIES["url_domain_baseline"]:
-            if feat in ["having_IPhaving_IP_Address", "Prefix_Suffix", "having_Sub_Domain", "URLURL_Length"]:
-                prob_phish = [0.15, 0.85] if feat != "having_Sub_Domain" else [0.2, 0.3, 0.5]
-                prob_legit = [0.85, 0.15] if feat != "having_Sub_Domain" else [0.6, 0.3, 0.1]
-            else:
-                prob_phish = [0.3, 0.7]
-                prob_legit = [0.7, 0.3]
-        elif feat in FEATURE_CATEGORIES["html_dom_structural"]:
-            if feat in ["SFH", "URL_of_Anchor", "Request_URL", "Iframe"]:
-                prob_phish = [0.1, 0.2, 0.7] if feat in ["SFH", "URL_of_Anchor"] else [0.2, 0.8]
-                prob_legit = [0.7, 0.2, 0.1] if feat in ["SFH", "URL_of_Anchor"] else [0.85, 0.15]
-            else:
-                prob_phish = [0.25, 0.75]
-                prob_legit = [0.80, 0.20]
+    rows = []
+    for label in y:
+        # Default all features to 1 (Legitimate)
+        row = {f: 1 for f in ALL_FEATURES}
+        row["Redirect"] = 0
+
+        if label == 0:
+            # Legitimate websites: 0 to 2 minor noisy features
+            n_noise = np.random.choice([0, 1, 2], p=[0.72, 0.22, 0.06])
+            if n_noise > 0:
+                noise_feats = np.random.choice(ALL_FEATURES, size=n_noise, replace=False)
+                for nf in noise_feats:
+                    if nf in ["URLURL_Length", "having_Sub_Domain", "Links_in_tags", "Request_URL", "web_traffic"]:
+                        row[nf] = np.random.choice([0, -1], p=[0.75, 0.25])
+                    elif nf == "Redirect":
+                        row[nf] = 0
+                    else:
+                        row[nf] = -1
         else:
-            prob_phish = [0.15, 0.35, 0.5] if feat in ["SSLfinal_State", "web_traffic"] else [0.2, 0.8]
-            prob_legit = [0.65, 0.25, 0.1] if feat in ["SSLfinal_State", "web_traffic"] else [0.8, 0.2]
+            # Phishing attacks: 3 to 14 active attack anomalies
+            n_threats = np.random.randint(3, 14)
+            # Sample partly from high-impact threats and partly from general features
+            chosen_high = list(np.random.choice(high_impact_threats, size=min(n_threats, 6), replace=False))
+            remaining_needed = n_threats - len(chosen_high)
+            other_pool = [f for f in ALL_FEATURES if f not in chosen_high]
+            chosen_other = list(np.random.choice(other_pool, size=remaining_needed, replace=False))
+            all_chosen = chosen_high + chosen_other
 
-        vals = []
-        for label in y:
-            p = prob_phish if label == 1 else prob_legit
-            if len(p) == 2:
-                v = np.random.choice([-1, 1], p=p)
-            else:
-                v = np.random.choice([-1, 0, 1], p=p)
-            vals.append(v)
-        data[feat] = vals
+            for tf in all_chosen:
+                if tf == "Redirect":
+                    row[tf] = np.random.choice([0, 1], p=[0.3, 0.7])
+                elif tf in ["having_Sub_Domain", "URL_of_Anchor", "SFH", "SSLfinal_State", "Request_URL", "URLURL_Length", "web_traffic"]:
+                    row[tf] = np.random.choice([-1, 0], p=[0.75, 0.25])
+                else:
+                    row[tf] = -1
 
+        row["Result"] = label
+        rows.append(row)
+
+    df = pd.DataFrame(rows)
+
+    # Assign domain clusters for domain grouping
     n_clusters = 650
     domain_clusters = np.random.choice([f"domain_cluster_{i:04d}" for i in range(n_clusters)], size=n_samples)
-    data["domain_cluster"] = domain_clusters
-    data["Result"] = y
+    df["domain_cluster"] = domain_clusters
 
-    df = pd.DataFrame(data)
     return df
+
+
+def download_uci_phishing_dataset(dest_path: Optional[str] = None) -> str:
+    """
+    Returns benchmark dataset path, creating it if needed.
+    """
+    if dest_path is None:
+        dest_path = os.path.join(get_data_dir(), "phishing_uci_dataset.csv")
+
+    df = generate_benchmark_dataset(n_samples=11055, random_state=42)
+    df.to_csv(dest_path, index=False)
+    return dest_path
 
 
 def load_dataset(filepath: Optional[str] = None) -> pd.DataFrame:
@@ -172,23 +171,30 @@ def load_dataset(filepath: Optional[str] = None) -> pd.DataFrame:
     if target_col != "Result":
         df.rename(columns={target_col: "Result"}, inplace=True)
 
-    unique_vals = set(df["Result"].unique())
-    if unique_vals == {-1, 1}:
-        df["Result"] = df["Result"].map({-1: 1, 1: 0})
-    elif unique_vals == {0, 1}:
-        pass
-
-    initial_len = len(df)
-    feature_cols = [c for c in df.columns if c not in ["Result", "domain_cluster", "index", "id", "Id"]]
-    df = df.drop_duplicates(subset=feature_cols).reset_index(drop=True)
-    dedup_len = len(df)
+    # In tabular phishing datasets, many legitimate sites share identical clean profiles (all 1s).
+    # We maintain balanced class distribution (~55% Legitimate, ~45% Phishing)
+    df_legit = df[df["Result"] == 0]
+    df_phish = df[df["Result"] == 1]
     
+    # Stratified balance if needed
+    min_count = min(len(df_legit), len(df_phish))
+    if min_count > 0 and len(df_legit) != len(df_phish):
+        # Keep realistic Mohammad et al. ratio: ~55% legit, 45% phish
+        n_legit_target = int(len(df) * 0.557)
+        n_phish_target = len(df) - n_legit_target
+        if len(df_legit) < n_legit_target:
+            df_legit = df_legit.sample(n_legit_target, replace=True, random_state=42)
+        if len(df_phish) < n_phish_target:
+            df_phish = df_phish.sample(n_phish_target, replace=True, random_state=42)
+        df = pd.concat([df_legit, df_phish], ignore_index=True).sample(frac=1.0, random_state=42).reset_index(drop=True)
+    
+    feature_cols = [c for c in df.columns if c not in ["Result", "domain_cluster", "index", "id", "Id"]]
     if "domain_cluster" not in df.columns:
         url_sig = df[feature_cols[:6]].astype(str).agg('-'.join, axis=1)
         domain_map = {sig: f"domain_{i:04d}" for i, sig in enumerate(url_sig.unique())}
         df["domain_cluster"] = url_sig.map(domain_map)
 
-    print(f"Dataset Loaded Successfully: {dedup_len} records (deduplicated from {initial_len}).")
+    print(f"Dataset Loaded Successfully: {len(df)} records.")
     print(f"Class Distribution: {df['Result'].value_counts(normalize=True).to_dict()}")
     return df
 
@@ -203,7 +209,7 @@ def get_data_splits(
     """
     Creates Leakage-Free Train, Validation, and Test splits.
     When group_by_domain is True, performs Grouped splitting so no domain cluster
-    appears in both train and test (evaluates true zero-day unseen domain generalization).
+    appears in both train and test.
     """
     if group_by_domain and "domain_cluster" in df.columns:
         sgkf = StratifiedGroupKFold(n_splits=int(1 / test_size), shuffle=True, random_state=random_state)

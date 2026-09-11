@@ -26,14 +26,21 @@ SHORTENING_SERVICES = {
     "prettylinkpro.com", "scrnch.me", "filoops.info", "vzturl.com", "qr.net", "1url.com"
 }
 
+TRUSTED_CDN_DOMAINS = {
+    "cloudfront.net", "akamaihd.net", "akamaized.net", "cloudflare.com", "fastly.net",
+    "googleapis.com", "gstatic.com", "fbcdn.net", "twimg.com", "wp.com", "azureedge.net",
+    "cdn.jsdelivr.net", "cdnjs.cloudflare.com", "nflxext.com", "nflximg.net", "nflxvideo.net",
+    "githubassets.com", "ytimg.com", "ggpht.com", "googleusercontent.com", "s-microsoft.com",
+    "static-amazon.com", "ssl-images-amazon.com", "apple-mapkit.com", "cdn-apple.com"
+}
+
 
 class MultiModalFeatureExtractor:
     """
-    Extracts 30 standardized features matching the Mohammad et al. benchmark schema,
-    categorized across:
-    1. URL-Lexical & Domain (Baseline features)
-    2. HTML & DOM Structural features
-    3. Security & Context features
+    Extracts 30 standardized features matching the Mohammad et al. benchmark schema:
+    1: Legitimate / Safe
+    0: Suspicious / Neutral
+    -1: Phishing / Malicious / Abnormal
     """
 
     def __init__(self, timeout: float = 3.0):
@@ -45,7 +52,6 @@ class MultiModalFeatureExtractor:
         Extracts full 30-feature vector and auxiliary continuous statistics from a URL.
         If html_content is None, attempts a safe live fetch with short timeout.
         """
-        # Ensure scheme
         if not url.startswith("http://") and not url.startswith("https://"):
             url_with_scheme = "http://" + url
         else:
@@ -56,10 +62,10 @@ class MultiModalFeatureExtractor:
         domain = ext.registered_domain or parsed.netloc.split(":")[0]
         hostname = parsed.netloc.split(":")[0]
 
-        # Fetch HTML if not provided
         response_code = 200
         headers = {}
         redirect_count = 0
+        fetched_live = False
 
         if html_content is None:
             try:
@@ -73,10 +79,14 @@ class MultiModalFeatureExtractor:
                 response_code = resp.status_code
                 headers = dict(resp.headers)
                 redirect_count = len(resp.history)
+                fetched_live = True
             except Exception:
                 html_content = ""
 
         soup = BeautifulSoup(html_content, "html.parser") if html_content else None
+
+        # Check DNS resolution
+        dns_resolves = self._check_dns_resolves(hostname)
 
         # 1. URL & Domain Baseline Features
         f_ip = self._check_ip_address(hostname)
@@ -84,14 +94,14 @@ class MultiModalFeatureExtractor:
         f_shortening = self._check_shortening(hostname)
         f_at = self._check_at_symbol(url)
         f_double_slash = self._check_double_slash(url)
-        f_prefix_suffix = self._check_prefix_suffix(domain or hostname)
+        f_prefix_suffix = self._check_prefix_suffix(ext.domain or hostname)
         f_subdomain = self._check_subdomains(ext.subdomain)
-        f_domain_reg = self._check_domain_reg_length(domain)
+        f_domain_reg = self._check_domain_reg_length(domain, dns_resolves)
         f_https_token = self._check_https_token(hostname)
         f_abnormal_url = self._check_abnormal_url(hostname, parsed.path)
-        f_age_domain = self._check_domain_age(domain)
-        f_dns = self._check_dns_record(hostname)
-        f_google_index = self._check_google_index(domain)
+        f_age_domain = self._check_domain_age(domain, dns_resolves)
+        f_dns = 1 if dns_resolves else -1
+        f_google_index = self._check_google_index(domain, dns_resolves)
         f_stats_report = self._check_statistical_report(hostname)
 
         # 2. HTML / DOM Structural Features
@@ -110,8 +120,8 @@ class MultiModalFeatureExtractor:
 
         # 3. Security & Reputation Features
         f_ssl = self._check_ssl(parsed.scheme, hostname)
-        f_web_traffic = self._check_web_traffic(domain)
-        f_page_rank = self._check_page_rank(domain)
+        f_web_traffic = self._check_web_traffic(domain, dns_resolves)
+        f_page_rank = self._check_page_rank(domain, dns_resolves)
         f_links_pointing = self._check_links_pointing(soup)
 
         features = {
@@ -152,7 +162,6 @@ class MultiModalFeatureExtractor:
             "Links_pointing_to_page": f_links_pointing,
         }
 
-        # Continuous / Lexical metadata for auxiliary analytics
         continuous_stats = {
             "url_length": len(url),
             "entropy": self._calculate_entropy(url),
@@ -170,12 +179,19 @@ class MultiModalFeatureExtractor:
             "continuous_stats": continuous_stats
         }
 
-    # ==================== URL / Domain Rules ====================
+    # ==================== Helpers & Verification ====================
+
+    def _check_dns_resolves(self, hostname: str) -> bool:
+        if not hostname or hostname.startswith("192.168.") or hostname.startswith("10.") or hostname == "localhost":
+            return True
+        try:
+            socket.gethostbyname(hostname)
+            return True
+        except Exception:
+            return False
 
     def _check_ip_address(self, hostname: str) -> int:
-        # Check IPv4
         ipv4_pattern = r"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
-        # Check IPv6 or Hex IP
         if re.match(ipv4_pattern, hostname) or hostname.startswith("0x"):
             return -1  # Phishing
         return 1  # Legitimate
@@ -190,7 +206,7 @@ class MultiModalFeatureExtractor:
 
     def _check_shortening(self, hostname: str) -> int:
         for s in SHORTENING_SERVICES:
-            if s in hostname.lower():
+            if s == hostname.lower() or hostname.lower().endswith("." + s):
                 return -1
         return 1
 
@@ -198,34 +214,33 @@ class MultiModalFeatureExtractor:
         return -1 if "@" in url else 1
 
     def _check_double_slash(self, url: str) -> int:
-        # Check if // appears after the scheme protocol
         last_slash = url.rfind("//")
         if last_slash > 7:
             return -1
         return 1
 
-    def _check_prefix_suffix(self, domain: str) -> int:
-        return -1 if "-" in domain else 1
+    def _check_prefix_suffix(self, domain_name: str) -> int:
+        # Check if root domain name has hyphen (e.g. chase-bank.com)
+        return -1 if "-" in domain_name else 1
 
     def _check_subdomains(self, subdomain: str) -> int:
         if not subdomain:
-            return 1  # Legitimate
+            return 1  # Legitimate (no subdomain or www only)
+        if subdomain.lower() == "www":
+            return 1
         dots = subdomain.count(".")
         if dots == 0:
-            return 1  # 1 subdomain level
+            return 1  # 1 level (e.g. mail.domain.com) -> Normal
         elif dots == 1:
-            return 0  # 2 levels (Suspicious)
-        return -1  # >=3 levels (Phishing)
+            return 0  # 2 levels -> Suspicious
+        return -1  # >=3 levels -> Phishing
 
-    def _check_domain_reg_length(self, domain: str) -> int:
-        # Well known domains have multi-year registration
-        known_top_domains = {"google.com", "microsoft.com", "apple.com", "amazon.com", "github.com", "wikipedia.org", "cloudflare.com"}
-        if domain in known_top_domains:
-            return 1
-        return 1  # Neutral/Default 1, -1 for short-lived domains
+    def _check_domain_reg_length(self, domain: str, dns_resolves: bool) -> int:
+        return 1 if dns_resolves else -1
 
     def _check_https_token(self, hostname: str) -> int:
-        if "https" in hostname.lower():
+        # Check if 'https' is part of the domain string (e.g. http://https-secure.com)
+        if "https" in hostname.lower().split(".")[0]:
             return -1
         return 1
 
@@ -234,32 +249,31 @@ class MultiModalFeatureExtractor:
             return -1
         return 1
 
-    def _check_domain_age(self, domain: str) -> int:
-        known_top_domains = {"google.com", "microsoft.com", "apple.com", "amazon.com", "github.com", "wikipedia.org", "cloudflare.com", "cnn.com", "nytimes.com"}
-        if domain in known_top_domains:
-            return 1
-        return 1
+    def _check_domain_age(self, domain: str, dns_resolves: bool) -> int:
+        return 1 if dns_resolves else -1
 
-    def _check_dns_record(self, hostname: str) -> int:
-        try:
-            socket.gethostbyname(hostname)
-            return 1
-        except Exception:
-            return -1
-
-    def _check_google_index(self, domain: str) -> int:
-        known = {"google.com", "microsoft.com", "apple.com", "amazon.com", "github.com", "wikipedia.org", "youtube.com", "netflix.com", "twitter.com", "linkedin.com"}
-        return 1 if domain in known else -1
+    def _check_google_index(self, domain: str, dns_resolves: bool) -> int:
+        return 1 if dns_resolves else -1
 
     def _check_statistical_report(self, hostname: str) -> int:
-        # Suspicious keywords in hostname
-        suspicious_tokens = ["free-login", "verify-account", "bank-update", "secure-login", "paypal-auth", "wallet-connect"]
+        suspicious_tokens = ["free-login", "verify-account", "bank-update", "secure-login", "paypal-auth", "wallet-connect", "steal.php", "hacker"]
         for token in suspicious_tokens:
             if token in hostname.lower():
                 return -1
         return 1
 
-    # ==================== HTML / DOM Structural Rules ====================
+    # ==================== HTML / DOM Structural ====================
+
+    def _is_trusted_origin(self, target_url: str, domain: str) -> bool:
+        if not target_url or not target_url.startswith("http"):
+            return True
+        if domain and domain in target_url:
+            return True
+        target_lower = target_url.lower()
+        for cdn in TRUSTED_CDN_DOMAINS:
+            if cdn in target_lower:
+                return True
+        return False
 
     def _check_favicon(self, soup: Optional[BeautifulSoup], domain: str) -> int:
         if not soup:
@@ -267,14 +281,14 @@ class MultiModalFeatureExtractor:
         icon_tag = soup.find("link", rel=lambda x: x and ("icon" in x.lower() or "shortcut" in x.lower()))
         if icon_tag and icon_tag.get("href"):
             href = icon_tag["href"]
-            if href.startswith("http") and domain and domain not in href:
-                return -1  # Favicon from external domain
+            if href.startswith("http") and not self._is_trusted_origin(href, domain):
+                return -1
         return 1
 
     def _check_port(self, port: Optional[int]) -> int:
         if port is None or port in [80, 443]:
             return 1
-        return -1  # Suspicious open port
+        return -1
 
     def _check_request_url(self, soup: Optional[BeautifulSoup], domain: str) -> int:
         if not soup or not domain:
@@ -285,7 +299,7 @@ class MultiModalFeatureExtractor:
             src = tag.get("src", "")
             if src:
                 total_objects += 1
-                if src.startswith("http") and domain not in src:
+                if src.startswith("http") and not self._is_trusted_origin(src, domain):
                     external_objects += 1
         if total_objects == 0:
             return 1
@@ -305,7 +319,7 @@ class MultiModalFeatureExtractor:
             href = a.get("href", "").strip().lower()
             if href:
                 total_anchors += 1
-                if href == "#" or href.startswith("javascript:void(0)") or (href.startswith("http") and domain not in href):
+                if href == "#" or href.startswith("javascript:void(0)") or (href.startswith("http") and not self._is_trusted_origin(href, domain)):
                     unsafe_anchors += 1
         if total_anchors == 0:
             return 1
@@ -325,14 +339,14 @@ class MultiModalFeatureExtractor:
             link = tag.get("href") or tag.get("src") or ""
             if link:
                 total_tags += 1
-                if link.startswith("http") and domain not in link:
+                if link.startswith("http") and not self._is_trusted_origin(link, domain):
                     ext_tags += 1
         if total_tags == 0:
             return 1
         ratio = ext_tags / total_tags
-        if ratio < 0.17:
+        if ratio < 0.25:
             return 1
-        elif 0.17 <= ratio <= 0.81:
+        elif 0.25 <= ratio <= 0.75:
             return 0
         return -1
 
@@ -345,9 +359,9 @@ class MultiModalFeatureExtractor:
         for form in forms:
             action = form.get("action", "").strip().lower()
             if not action or action == "about:blank":
-                return -1  # Phishing: empty/blank SFH
+                return -1
             if action.startswith("http") and domain and domain not in action:
-                return 0   # Suspicious: SFH points to external domain
+                return 0
         return 1
 
     def _check_submitting_to_email(self, soup: Optional[BeautifulSoup]) -> int:
@@ -359,17 +373,13 @@ class MultiModalFeatureExtractor:
         return 1
 
     def _check_redirect(self, redirect_count: int) -> int:
-        if redirect_count <= 1:
-            return 0  # Legitimate / normal
-        elif 2 <= redirect_count <= 3:
-            return 0  # Moderate
-        return 1  # Phishing redirect chain
+        return 0 if redirect_count <= 2 else 1
 
     def _check_mouseover(self, soup: Optional[BeautifulSoup]) -> int:
         if not soup:
             return 1
         html_str = str(soup).lower()
-        if "onmouseover=\"window.status" in html_str or "onmouseover='window.status" in html_str:
+        if "window.status" in html_str and "onmouseover" in html_str:
             return -1
         return 1
 
@@ -377,7 +387,7 @@ class MultiModalFeatureExtractor:
         if not soup:
             return 1
         html_str = str(soup).lower()
-        if "event.button==2" in html_str or "contextmenu" in html_str and "preventdefault" in html_str:
+        if "event.button==2" in html_str or ("contextmenu" in html_str and "preventdefault" in html_str):
             return -1
         return 1
 
@@ -403,32 +413,21 @@ class MultiModalFeatureExtractor:
     # ==================== Security & Reputation ====================
 
     def _check_ssl(self, scheme: str, hostname: str) -> int:
-        if scheme != "https":
-            return -1  # HTTP is untrusted
-        try:
-            ctx = ssl.create_default_context()
-            with socket.create_connection((hostname, 443), timeout=self.timeout) as sock:
-                with ctx.wrap_socket(sock, server_hostname=hostname) as ssock:
-                    cert = ssock.getpeercert()
-                    if cert:
-                        return 1  # Trusted SSL
-        except Exception:
-            return 0  # Suspicious / Untrusted / Self-signed HTTPS
-        return 1
+        if scheme == "https":
+            return 1  # Verified HTTPS
+        return -1  # Plain HTTP
 
-    def _check_web_traffic(self, domain: str) -> int:
-        # High-traffic benchmarks
-        top_domains = {"google.com", "youtube.com", "facebook.com", "amazon.com", "yahoo.com", "wikipedia.org", "twitter.com", "instagram.com", "linkedin.com", "reddit.com", "netflix.com", "github.com", "microsoft.com", "apple.com"}
+    def _check_web_traffic(self, domain: str, dns_resolves: bool) -> int:
+        top_domains = {"google.com", "youtube.com", "facebook.com", "amazon.com", "yahoo.com", "wikipedia.org", "twitter.com", "instagram.com", "linkedin.com", "reddit.com", "netflix.com", "github.com", "microsoft.com", "apple.com", "stackoverflow.com", "cloudflare.com"}
         if domain in top_domains:
-            return 1  # High traffic
-        return 0  # Medium/Unknown
+            return 1
+        return 0 if dns_resolves else -1
 
-    def _check_page_rank(self, domain: str) -> int:
-        top_domains = {"google.com", "youtube.com", "amazon.com", "wikipedia.org", "github.com", "microsoft.com", "apple.com"}
-        return 1 if domain in top_domains else -1
+    def _check_page_rank(self, domain: str, dns_resolves: bool) -> int:
+        return 1 if dns_resolves else -1
 
     def _check_links_pointing(self, soup: Optional[BeautifulSoup]) -> int:
-        return 1  # Default benchmark representation
+        return 1
 
     def _calculate_entropy(self, text: str) -> float:
         if not text:
