@@ -1,4 +1,4 @@
-﻿/**
+/**
  * PhishGuard Enterprise Cybersecurity Platform
  * Frontend Controller (SPA)
  * 
@@ -22,6 +22,7 @@ let currentChecklistItems = [];
 let currentChecklistFilter = "ALL";
 
 document.addEventListener("DOMContentLoaded", () => {
+  initShapeGridBackground();
   initNavigation();
   initDashboard();
   initUrlScanner();
@@ -1418,3 +1419,155 @@ function escapeHtml(text) {
     .replace(/'/g, "&#039;");
 }
 
+/* =========================================================================
+   SHAPEGRID BACKGROUND ENGINE
+   Hexagonal grid that scrolls diagonally with hover-fill + decay trail
+   ========================================================================= */
+function initShapeGridBackground() {
+  const canvas = document.getElementById('shapegrid-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  // ── Config (mirrors ShapeGrid props) ─────────────────────────────────────
+  const SPEED          = 0.5;
+  const S              = 40;                     // circumradius (squareSize)
+  const BORDER_COLOR   = 'rgba(255,255,255,0.15)';
+  const HOVER_FILL     = '#1a2035';
+  const MAX_TRAIL      = 5;
+  const DECAY          = 1 / 55;                 // fade out over ~0.9 s at 60 fps
+
+  // ── Flat-top hexagon layout constants ────────────────────────────────────
+  const SQRT3        = Math.sqrt(3);
+  const COL_W        = S * 1.5;                  // horizontal step
+  const ROW_H        = S * SQRT3;                // vertical step
+  const HEX_INRADIUS = S * SQRT3 / 2;
+
+  // ── State ─────────────────────────────────────────────────────────────────
+  let W = 0, H = 0;
+  let totalX = 0, totalY = 0;
+  const mouse = { x: -99999, y: -99999 };
+  let lastKey = null;
+  const trail = [];
+
+  // ── Resize ────────────────────────────────────────────────────────────────
+  function resize() {
+    W = canvas.width  = window.innerWidth;
+    H = canvas.height = window.innerHeight;
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  // ── Mouse tracking ────────────────────────────────────────────────────────
+  window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+  window.addEventListener('mouseleave', () => { mouse.x = -99999; mouse.y = -99999; });
+
+  // ── Draw hexagon path (flat-top, vertices at 0°, 60°, 120°…) ─────────────
+  function hexPath(cx, cy) {
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const a = (Math.PI / 3) * i;
+      const x = cx + S * Math.cos(a);
+      const y = cy + S * Math.sin(a);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+  }
+
+  // ── O(1) point-in-flat-top-hex test ──────────────────────────────────────
+  // Three half-plane conditions for circumradius S:
+  //   |dx| ≤ S  AND  |dy| ≤ S√3/2  AND  |dx| + |dy|/√3 ≤ S
+  function ptInHex(cx, cy, px, py) {
+    const adx = Math.abs(px - cx);
+    const ady = Math.abs(py - cy);
+    if (adx > S)            return false;
+    if (ady > HEX_INRADIUS) return false;
+    return adx + ady / SQRT3 <= S;
+  }
+
+  // ── Build visible cell list ───────────────────────────────────────────────
+  function buildCells() {
+    const ox   = ((totalX % COL_W) + COL_W) % COL_W;
+    const oy   = ((totalY % ROW_H) + ROW_H) % ROW_H;
+    const cols = Math.ceil(W / COL_W) + 4;
+    const rows = Math.ceil(H / ROW_H) + 4;
+    const cells = [];
+    for (let c = -2; c < cols; c++) {
+      const cx      = c * COL_W - ox;
+      const stagger = (c & 1) ? ROW_H / 2 : 0;
+      for (let r = -2; r < rows; r++) {
+        cells.push({ c, r, cx, cy: r * ROW_H - oy + stagger });
+      }
+    }
+    return cells;
+  }
+
+  // ── Stable cell identity (survives wrapping) ──────────────────────────────
+  function cellKey(c, r) {
+    return `${c + Math.floor(totalX / COL_W)},${r + Math.floor(totalY / ROW_H)}`;
+  }
+
+  // ── Main render loop ──────────────────────────────────────────────────────
+  function render() {
+    totalX += SPEED;
+    totalY += SPEED;
+
+    ctx.clearRect(0, 0, W, H);
+
+    const cells = buildCells();
+
+    // Detect hovered cell
+    let hoveredKey = null;
+    for (const { c, r, cx, cy } of cells) {
+      if (ptInHex(cx, cy, mouse.x, mouse.y)) {
+        hoveredKey = cellKey(c, r);
+        break;
+      }
+    }
+
+    // Push to trail on cell change
+    if (hoveredKey && hoveredKey !== lastKey) {
+      trail.unshift({ key: hoveredKey, alpha: 1 });
+      if (trail.length > MAX_TRAIL) trail.pop();
+      lastKey = hoveredKey;
+    }
+
+    // Decay trail
+    for (let i = trail.length - 1; i >= 0; i--) {
+      trail[i].alpha -= DECAY;
+      if (trail[i].alpha <= 0) trail.splice(i, 1);
+    }
+
+    // Lookup map for O(1) per-cell check
+    const trailMap = new Map();
+    for (const t of trail) {
+      if (!trailMap.has(t.key) || trailMap.get(t.key) < t.alpha) {
+        trailMap.set(t.key, t.alpha);
+      }
+    }
+
+    // Render each cell
+    for (const { c, r, cx, cy } of cells) {
+      const key = cellKey(c, r);
+      const ta  = trailMap.get(key) || 0;
+
+      hexPath(cx, cy);
+
+      if (ta > 0) {
+        ctx.globalAlpha = ta * 0.88;
+        ctx.fillStyle   = HOVER_FILL;
+        ctx.fill();
+      }
+
+      ctx.globalAlpha = 0.20;
+      ctx.strokeStyle = BORDER_COLOR;
+      ctx.lineWidth   = 1;
+      ctx.stroke();
+    }
+
+    ctx.globalAlpha = 1;
+    requestAnimationFrame(render);
+  }
+
+  requestAnimationFrame(render);
+}
