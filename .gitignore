@@ -15,3 +15,4 @@ data/phishing_uci_dataset.csv
 .DS_Store
 *.log
 *.db
+.vercel

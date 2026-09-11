@@ -11,13 +11,20 @@ from typing import Dict, Any, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, ClassifierMixin, TransformerMixin
-from sklearn.ensemble import RandomForestClassifier, StackingClassifier
+from sklearn.ensemble import RandomForestClassifier, StackingClassifier, HistGradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import RobustScaler
-import lightgbm as lgb
-import xgboost as xgb
+try:
+    import lightgbm as lgb
+except (ImportError, OSError, Exception):
+    lgb = None
+
+try:
+    import xgboost as xgb
+except (ImportError, OSError, Exception):
+    xgb = None
 import joblib
 
 from src.data_loader import ALL_FEATURES, FEATURE_CATEGORIES
@@ -94,28 +101,44 @@ class ProposedMultiModalPipeline:
 
     def _create_base_model(self, model_type: str):
         if model_type == "lightgbm":
-            return lgb.LGBMClassifier(
-                n_estimators=200,
-                learning_rate=0.05,
-                max_depth=6,
-                num_leaves=31,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                random_state=self.random_state,
-                n_jobs=-1,
-                verbose=-1
-            )
+            if lgb is not None:
+                return lgb.LGBMClassifier(
+                    n_estimators=200,
+                    learning_rate=0.05,
+                    max_depth=6,
+                    num_leaves=31,
+                    subsample=0.8,
+                    colsample_bytree=0.8,
+                    random_state=self.random_state,
+                    n_jobs=-1,
+                    verbose=-1
+                )
+            else:
+                return HistGradientBoostingClassifier(
+                    max_iter=200,
+                    learning_rate=0.05,
+                    max_depth=6,
+                    random_state=self.random_state
+                )
         elif model_type == "xgboost":
-            return xgb.XGBClassifier(
-                n_estimators=200,
-                learning_rate=0.05,
-                max_depth=5,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                random_state=self.random_state,
-                eval_metric="logloss",
-                n_jobs=-1
-            )
+            if xgb is not None:
+                return xgb.XGBClassifier(
+                    n_estimators=200,
+                    learning_rate=0.05,
+                    max_depth=5,
+                    subsample=0.8,
+                    colsample_bytree=0.8,
+                    random_state=self.random_state,
+                    eval_metric="logloss",
+                    n_jobs=-1
+                )
+            else:
+                return HistGradientBoostingClassifier(
+                    max_iter=200,
+                    learning_rate=0.05,
+                    max_depth=5,
+                    random_state=self.random_state
+                )
         elif model_type == "random_forest":
             return RandomForestClassifier(
                 n_estimators=200,
@@ -126,9 +149,11 @@ class ProposedMultiModalPipeline:
                 n_jobs=-1
             )
         elif model_type == "stacking":
+            lgb_estimator = lgb.LGBMClassifier(n_estimators=100, learning_rate=0.05, max_depth=5, random_state=self.random_state, verbose=-1, n_jobs=-1) if lgb is not None else HistGradientBoostingClassifier(max_iter=100, learning_rate=0.05, max_depth=5, random_state=self.random_state)
+            xgb_estimator = xgb.XGBClassifier(n_estimators=100, learning_rate=0.05, max_depth=4, random_state=self.random_state, eval_metric="logloss", n_jobs=-1) if xgb is not None else HistGradientBoostingClassifier(max_iter=100, learning_rate=0.05, max_depth=4, random_state=self.random_state)
             estimators = [
-                ("lgb", lgb.LGBMClassifier(n_estimators=100, learning_rate=0.05, max_depth=5, random_state=self.random_state, verbose=-1, n_jobs=-1)),
-                ("xgb", xgb.XGBClassifier(n_estimators=100, learning_rate=0.05, max_depth=4, random_state=self.random_state, eval_metric="logloss", n_jobs=-1)),
+                ("lgb", lgb_estimator),
+                ("xgb", xgb_estimator),
                 ("rf", RandomForestClassifier(n_estimators=100, max_depth=10, random_state=self.random_state, n_jobs=-1))
             ]
             return StackingClassifier(

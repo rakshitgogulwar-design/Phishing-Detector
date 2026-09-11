@@ -24,5 +24,5 @@ ENV PHISHGUARD_ENV=production
 ENV PHISHGUARD_HOST=0.0.0.0
 ENV PHISHGUARD_PORT=8000
 
-# Launch Gunicorn with Uvicorn workers
-CMD ["uvicorn", "app.backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+# Launch Uvicorn server (respects dynamic PORT from Render/Railway, defaults to 8000)
+CMD ["sh", "-c", "uvicorn app.backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

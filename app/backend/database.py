@@ -12,10 +12,21 @@ import datetime
 from typing import Dict, Any, List, Optional, Tuple
 
 
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "phishguard.db")
+_DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "phishguard.db")
+if os.environ.get("VERCEL"):
+    DB_PATH = "/tmp/phishguard.db"
+    if os.path.exists(_DEFAULT_DB_PATH) and not os.path.exists(DB_PATH):
+        import shutil
+        try:
+            shutil.copy2(_DEFAULT_DB_PATH, DB_PATH)
+        except Exception:
+            pass
+else:
+    DB_PATH = os.environ.get("PHISHGUARD_DB_PATH", _DEFAULT_DB_PATH)
 
 
 def get_db_connection() -> sqlite3.Connection:
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn

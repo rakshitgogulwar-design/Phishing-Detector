@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: phishguard
+    runtime: docker
+    plan: free
+    branch: main
+    healthCheckPath: /api/statistics
+    envVars:
+      - key: PHISHGUARD_ENV
+        value: production
