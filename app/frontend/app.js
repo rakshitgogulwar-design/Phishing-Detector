@@ -1,43 +1,335 @@
 /**
- * AegisPhish Frontend Controller
- * Handles interactive scanning, preset threats, explainable AI rendering,
- * and scientific benchmark visualization.
+ * PhishGuard Enterprise Cybersecurity Platform
+ * Frontend Controller (SPA)
+ * 
+ * Features:
+ * - Real-time passive URL scanning with 0-100 risk scoring and component breakdown
+ * - Explainable factor checklist (Pass / Fail / Warn)
+ * - Email / SMS / Social media NLP message analysis
+ * - Persistent scan history in SQLite with live search, status filtering, export, and deletion
+ * - Interactive Chart.js threat distribution analytics
+ * - Configurable hybrid engine weights (Rules / ML / Intel)
+ * - False-positive / false-negative feedback reporting
  */
 
-let rocChartInstance = null;
-let genChartInstance = null;
+// Global State & Chart Instances
+let riskChartInstance = null;
+let statsChartInstance = null;
+let lastUrlScanResult = null;
+let searchDebounceTimeout = null;
+let currentFilter = "";
 
 document.addEventListener("DOMContentLoaded", () => {
-  initTabs();
-  loadPresets();
-  loadBenchmarks();
-  initFormHandler();
+  initNavigation();
+  initDashboard();
+  initUrlScanner();
+  initMessageScanner();
+  initHistory();
+  initStatistics();
+  initSettings();
+  initFeedbackModal();
 });
 
-// Tab Navigation
-function initTabs() {
-  const tabBtns = document.querySelectorAll(".tab-btn");
-  const tabContents = document.querySelectorAll(".tab-content");
+/* =========================================================================
+   1. NAVIGATION & VIEW SWITCHING
+   ========================================================================= */
 
-  tabBtns.forEach(btn => {
+const VIEW_TITLES = {
+  "dashboard-view": {
+    title: "Security Dashboard",
+    subtitle: "Real-time threat monitoring, risk distribution, and attack prevention."
+  },
+  "url-scanner-view": {
+    title: "Advanced URL Threat Scanner",
+    subtitle: "Multi-factor passive inspection evaluating lexical tokens, brand spoofing, and TLD reputation."
+  },
+  "msg-scanner-view": {
+    title: "Email & Text Threat Scanner",
+    subtitle: "Psychological urgency analysis, credential trap detection, and embedded link inspection."
+  },
+  "history-view": {
+    title: "Persistent Scan History",
+    subtitle: "Search, filter, inspect, and export all historical security evaluations stored in SQLite."
+  },
+  "statistics-view": {
+    title: "Security Statistics & Benchmarks",
+    subtitle: "Empirical threat metrics, classification ratios, and zero-day model validation."
+  },
+  "settings-view": {
+    title: "Detection Engine Configuration",
+    subtitle: "Fine-tune hybrid weights balancing heuristic rules, machine learning inference, and threat intelligence."
+  },
+  "about-view": {
+    title: "About PhishGuard",
+    subtitle: "Defense-in-depth cybersecurity platform for academic research and enterprise defense."
+  }
+};
+
+function initNavigation() {
+  const navButtons = document.querySelectorAll(".sidebar-nav .nav-item");
+  navButtons.forEach(btn => {
     btn.addEventListener("click", () => {
-      const targetId = btn.getAttribute("data-tab");
-
-      tabBtns.forEach(b => b.classList.remove("active"));
-      tabContents.forEach(c => c.classList.remove("active"));
-
-      btn.classList.add("active");
-      const targetContent = document.getElementById(targetId);
-      if (targetContent) {
-        targetContent.classList.add("active");
-      }
+      const viewId = btn.getAttribute("data-view");
+      switchView(viewId);
     });
+  });
+
+  // Quick scan button in header
+  const btnQuickScan = document.getElementById("btn-header-quickscan");
+  if (btnQuickScan) {
+    btnQuickScan.addEventListener("click", () => {
+      switchView("url-scanner-view");
+      const input = document.getElementById("target-url-input");
+      if (input) input.focus();
+    });
+  }
+
+  // "View All History" from dashboard
+  const btnViewAllHistory = document.getElementById("btn-view-all-history");
+  if (btnViewAllHistory) {
+    btnViewAllHistory.addEventListener("click", () => {
+      switchView("history-view");
+    });
+  }
+
+  // "Scan Another URL" button
+  const btnScanAnother = document.getElementById("btn-scan-another-url");
+  if (btnScanAnother) {
+    btnScanAnother.addEventListener("click", () => {
+      const input = document.getElementById("target-url-input");
+      if (input) {
+        input.value = "";
+        input.focus();
+      }
+      const placeholder = document.getElementById("url-result-placeholder");
+      const resultCard = document.getElementById("url-result-card");
+      if (placeholder) placeholder.classList.remove("hidden");
+      if (resultCard) resultCard.classList.add("hidden");
+    });
+  }
+}
+
+function switchView(viewId) {
+  // Update sidebar active button
+  document.querySelectorAll(".sidebar-nav .nav-item").forEach(btn => {
+    if (btn.getAttribute("data-view") === viewId) {
+      btn.classList.add("active");
+    } else {
+      btn.classList.remove("active");
+    }
+  });
+
+  // Update visible panel
+  document.querySelectorAll(".view-panel").forEach(panel => {
+    if (panel.id === viewId) {
+      panel.classList.add("active");
+    } else {
+      panel.classList.remove("active");
+    }
+  });
+
+  // Update header title & subtitle
+  const pageTitle = document.getElementById("page-title");
+  const pageSubtitle = document.getElementById("page-subtitle");
+  if (VIEW_TITLES[viewId]) {
+    if (pageTitle) pageTitle.textContent = VIEW_TITLES[viewId].title;
+    if (pageSubtitle) pageSubtitle.textContent = VIEW_TITLES[viewId].subtitle;
+  }
+
+  // Refresh view-specific data
+  if (viewId === "dashboard-view") {
+    loadDashboardStats();
+  } else if (viewId === "history-view") {
+    loadHistory();
+  } else if (viewId === "statistics-view") {
+    loadStatisticsView();
+  } else if (viewId === "settings-view") {
+    loadSettings();
+  }
+}
+
+/* =========================================================================
+   2. DASHBOARD CONTROLLER
+   ========================================================================= */
+
+function initDashboard() {
+  loadDashboardStats();
+}
+
+async function loadDashboardStats() {
+  try {
+    const res = await fetch("/api/statistics");
+    if (!res.ok) return;
+    const stats = await res.json();
+
+    const total = stats.total_scans || 0;
+    const safe = stats.safe_count || 0;
+    const suspicious = stats.suspicious_count || 0;
+    const phishing = stats.phishing_count || 0;
+
+    // Update stat numbers
+    const totalEl = document.getElementById("dash-total-scans");
+    const safeEl = document.getElementById("dash-safe-count");
+    const suspEl = document.getElementById("dash-suspicious-count");
+    const phishEl = document.getElementById("dash-phishing-count");
+
+    if (totalEl) totalEl.textContent = total.toLocaleString();
+    if (safeEl) safeEl.textContent = safe.toLocaleString();
+    if (suspEl) suspEl.textContent = suspicious.toLocaleString();
+    if (phishEl) phishEl.textContent = phishing.toLocaleString();
+
+    // Percentages
+    const safePct = total > 0 ? Math.round((safe / total) * 100) : 0;
+    const suspPct = total > 0 ? Math.round((suspicious / total) * 100) : 0;
+    const phishPct = total > 0 ? Math.round((phishing / total) * 100) : 0;
+
+    const safePctEl = document.getElementById("dash-safe-pct");
+    const suspPctEl = document.getElementById("dash-suspicious-pct");
+    const phishPctEl = document.getElementById("dash-phishing-pct");
+
+    if (safePctEl) safePctEl.textContent = `${safePct}% of total`;
+    if (suspPctEl) suspPctEl.textContent = `${suspPct}% of total`;
+    if (phishPctEl) phishPctEl.textContent = `${phishPct}% of total`;
+
+    // Render / update chart
+    renderDashboardChart(safe, suspicious, phishing);
+
+    // Load recent scans
+    loadRecentScansTable();
+  } catch (err) {
+    console.error("Failed to load dashboard statistics:", err);
+  }
+}
+
+function renderDashboardChart(safe, suspicious, phishing) {
+  const canvas = document.getElementById("riskDistributionChart");
+  if (!canvas) return;
+
+  if (riskChartInstance) {
+    riskChartInstance.destroy();
+  }
+
+  const ctx = canvas.getContext("2d");
+  riskChartInstance = new Chart(ctx, {
+    type: "doughnut",
+    data: {
+      labels: ["Safe (0-30)", "Suspicious (31-60)", "Phishing (61-100)"],
+      datasets: [{
+        data: [safe, suspicious, phishing],
+        backgroundColor: [
+          "#10b981", // Emerald Green
+          "#f59e0b", // Amber
+          "#ef4444"  // Red
+        ],
+        borderColor: "#182234",
+        borderWidth: 3,
+        hoverOffset: 6
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          position: "bottom",
+          labels: {
+            color: "#94a3b8",
+            font: { family: "'Plus Jakarta Sans', sans-serif", size: 12 },
+            padding: 18
+          }
+        },
+        tooltip: {
+          backgroundColor: "rgba(15, 23, 42, 0.95)",
+          titleColor: "#f8fafc",
+          bodyColor: "#cbd5e1",
+          borderColor: "#334155",
+          borderWidth: 1,
+          padding: 12,
+          boxPadding: 6
+        }
+      },
+      cutout: "70%"
+    }
   });
 }
 
-// Load Attack Presets
+async function loadRecentScansTable() {
+  const tbody = document.getElementById("recent-scans-tbody");
+  if (!tbody) return;
+
+  try {
+    const res = await fetch("/api/history?limit=5");
+    if (!res.ok) throw new Error("History fetch error");
+    const data = await res.json();
+    const scans = data.scans || [];
+
+    if (scans.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" class="text-center py-4 text-muted">No scans recorded yet. Enter a URL above to perform a scan!</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = scans.map(s => {
+      const statusBadge = getStatusBadge(s.status);
+      const scoreBadge = getScoreBadge(s.risk_score);
+      const dateFormatted = formatTimestamp(s.timestamp);
+      const targetShort = escapeHtml(truncateText(s.target, 55));
+      const scanType = s.scan_type === "url" ? `<span class="type-tag url-tag">URL</span>` : `<span class="type-tag msg-tag">MSG</span>`;
+
+      return `
+        <tr>
+          <td>${scanType}</td>
+          <td class="font-mono text-break" title="${escapeHtml(s.target)}">${targetShort}</td>
+          <td>${statusBadge}</td>
+          <td>${scoreBadge}</td>
+          <td class="text-muted text-sm">${dateFormatted}</td>
+          <td>
+            <button class="btn-table-action" onclick="quickInspectScan(${s.id})">Inspect</button>
+          </td>
+        </tr>
+      `;
+    }).join("");
+  } catch (err) {
+    console.error("Failed to load recent scans:", err);
+    tbody.innerHTML = `<tr><td colspan="6" class="text-center py-4 text-danger">Failed to load recent scans.</td></tr>`;
+  }
+}
+
+/* =========================================================================
+   3. URL SCANNER CONTROLLER
+   ========================================================================= */
+
+function initUrlScanner() {
+  loadPresets();
+
+  const form = document.getElementById("url-scan-form");
+  if (form) {
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      runUrlScan();
+    });
+  }
+
+  // Copy report
+  const btnCopy = document.getElementById("btn-copy-url-result");
+  if (btnCopy) {
+    btnCopy.addEventListener("click", copyUrlReport);
+  }
+
+  // Report false positive
+  const btnReport = document.getElementById("btn-report-false-positive");
+  if (btnReport) {
+    btnReport.addEventListener("click", () => {
+      if (lastUrlScanResult) {
+        openFeedbackModal(lastUrlScanResult.url);
+      }
+    });
+  }
+}
+
 async function loadPresets() {
-  const selector = document.getElementById("preset-selector");
+  const select = document.getElementById("url-preset-select");
+  if (!select) return;
+
   try {
     const res = await fetch("/api/presets");
     if (!res.ok) return;
@@ -49,384 +341,817 @@ async function loadPresets() {
       opt.textContent = `[${p.category}] ${p.name}`;
       opt.dataset.url = p.url;
       opt.dataset.html = p.simulated_html || "";
-      selector.appendChild(opt);
+      select.appendChild(opt);
     });
 
-    selector.addEventListener("change", (e) => {
-      const selected = selector.options[selector.selectedIndex];
-      if (selected && selected.dataset.url) {
-        document.getElementById("url-input").value = selected.dataset.url;
-        document.getElementById("html-input").value = selected.dataset.html || "";
-        // Automatically submit scan on preset select
-        triggerScan();
+    select.addEventListener("change", () => {
+      const opt = select.options[select.selectedIndex];
+      if (opt && opt.dataset.url) {
+        const urlInput = document.getElementById("target-url-input");
+        const htmlInput = document.getElementById("custom-html-input");
+        if (urlInput) urlInput.value = opt.dataset.url;
+        if (htmlInput) htmlInput.value = opt.dataset.html || "";
+        runUrlScan();
       }
     });
   } catch (err) {
-    console.warn("Presets fetch skipped:", err);
+    console.warn("Presets could not be loaded:", err);
   }
 }
 
-// Form Handler
-function initFormHandler() {
-  const form = document.getElementById("scan-form");
-  form.addEventListener("submit", (e) => {
-    e.preventDefault();
-    triggerScan();
-  });
-}
-
-async function triggerScan() {
-  const urlInput = document.getElementById("url-input");
-  const htmlInput = document.getElementById("html-input");
-  const btnText = document.getElementById("btn-text");
-  const btnSpinner = document.getElementById("btn-spinner");
-  const submitBtn = document.getElementById("submit-scan-btn");
+async function runUrlScan() {
+  const urlInput = document.getElementById("target-url-input");
+  const htmlInput = document.getElementById("custom-html-input");
+  const btnSubmit = document.getElementById("btn-submit-url");
+  const btnText = document.getElementById("url-btn-text");
+  const btnSpinner = document.getElementById("url-btn-spinner");
 
   const url = urlInput.value.trim();
-  if (!url) return;
+  if (!url) {
+    showToast("Please enter a valid URL to analyze", "warning");
+    return;
+  }
 
-  // Set loading state
-  btnText.textContent = "Analyzing...";
-  btnSpinner.classList.remove("hidden");
-  submitBtn.disabled = true;
+  // UI Loading State
+  if (btnText) btnText.textContent = "Analyzing Threat...";
+  if (btnSpinner) btnSpinner.classList.remove("hidden");
+  if (btnSubmit) btnSubmit.disabled = true;
 
   try {
-    const payload = {
-      url: url,
-      html_content: htmlInput.value.trim() || null
-    };
-
-    const res = await fetch("/api/analyze", {
+    const res = await fetch("/api/scan-url", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
+      body: JSON.stringify({
+        url: url,
+        html_content: htmlInput ? (htmlInput.value.trim() || null) : null
+      })
     });
 
     if (!res.ok) {
-      const errData = await res.json();
-      throw new Error(errData.detail || "Analysis request failed.");
+      const err = await res.json();
+      throw new Error(err.detail || "URL scan failed");
     }
 
     const data = await res.json();
-    renderAnalysisResults(data);
+    lastUrlScanResult = data;
+    renderUrlResult(data);
+    showToast(`Scan complete: ${data.status} (Score: ${data.risk_score}/100)`, getToastType(data.status));
   } catch (err) {
-    alert("Scan Error: " + err.message);
+    console.error("URL scan failed:", err);
+    showToast(err.message || "Failed to scan URL. Please verify server connection.", "error");
   } finally {
-    btnText.textContent = "Analyze Target";
-    btnSpinner.classList.add("hidden");
-    submitBtn.disabled = false;
+    if (btnText) btnText.textContent = "Scan URL";
+    if (btnSpinner) btnSpinner.classList.add("hidden");
+    if (btnSubmit) btnSubmit.disabled = false;
   }
 }
 
-// Render Analysis Results
-function renderAnalysisResults(data) {
-  document.getElementById("results-placeholder").classList.add("hidden");
-  const resultsContainer = document.getElementById("results-container");
-  resultsContainer.classList.remove("hidden");
+function renderUrlResult(data) {
+  const placeholder = document.getElementById("url-result-placeholder");
+  const card = document.getElementById("url-result-card");
+  if (placeholder) placeholder.classList.add("hidden");
+  if (card) card.classList.remove("hidden");
 
-  // 1. Master Verdict Banner
-  const banner = document.getElementById("verdict-banner");
-  const verdictIcon = document.getElementById("verdict-icon");
-  const verdictTag = document.getElementById("verdict-tag");
-  const verdictTitle = document.getElementById("verdict-title");
-  const verdictSummary = document.getElementById("verdict-summary");
-  const riskScoreVal = document.getElementById("risk-score-val");
-  const riskBarFill = document.getElementById("risk-bar-fill");
-  const latencyVal = document.getElementById("latency-val");
-  const featLatencyVal = document.getElementById("feat-latency-val");
+  // Banner & Status
+  const banner = document.getElementById("url-verdict-banner");
+  const badge = document.getElementById("url-verdict-badge");
+  const target = document.getElementById("url-result-target");
+  const meta = document.getElementById("url-result-meta");
+  const riskVal = document.getElementById("url-risk-val");
 
-  banner.className = "verdict-banner";
-  const phishProb = data.proposed_system.phishing_probability;
-  const riskPercent = (phishProb * 100).toFixed(1);
-
-  riskScoreVal.textContent = `${riskPercent}%`;
-  riskBarFill.style.width = `${riskPercent}%`;
-  latencyVal.textContent = `${data.timing.total_latency_ms} ms`;
-  featLatencyVal.textContent = `Extraction: ${data.timing.feature_extraction_ms}ms | Model: ${data.proposed_system.inference_latency_ms}ms`;
-
-  if (phishProb >= 0.70) {
-    banner.classList.add("danger");
-    verdictIcon.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`;
-    verdictTag.textContent = "CRITICAL PHISHING DETECTED";
-    verdictTitle.textContent = "High-Risk Malicious Phishing Attack";
-  } else if (phishProb >= 0.35) {
-    banner.classList.add("warning");
-    verdictIcon.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`;
-    verdictTag.textContent = "SUSPICIOUS / ELEVATED RISK";
-    verdictTitle.textContent = "Ambiguous Website: Caution Recommended";
-  } else {
-    banner.classList.add("safe");
-    verdictIcon.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>`;
-    verdictTag.textContent = "LEGITIMATE WEBSITE VERIFIED";
-    verdictTitle.textContent = "Authentic & Safe Web Infrastructure";
+  const status = data.status || "SAFE";
+  if (banner) {
+    banner.className = "verdict-banner " + (
+      status === "SAFE" ? "safe-banner" :
+      status === "SUSPICIOUS" ? "suspicious-banner" : "phishing-banner"
+    );
   }
 
-  verdictSummary.textContent = data.explanation.summary || "";
+  if (badge) {
+    badge.textContent = status === "PHISHING" ? "HIGH RISK / PHISHING" : status;
+    badge.className = "verdict-badge " + (
+      status === "SAFE" ? "badge-safe" :
+      status === "SUSPICIOUS" ? "badge-suspicious" : "badge-phishing"
+    );
+  }
 
-  // 2. Proposed vs Baseline Model Cards
-  const propPredTag = document.getElementById("prop-pred-tag");
-  const propPhishProb = document.getElementById("prop-phish-prob");
-  const propLegitProb = document.getElementById("prop-legit-prob");
+  if (target) target.textContent = data.url;
+  if (meta) {
+    const conf = Math.round((data.confidence || 0.95) * 100);
+    const latency = data.analysis_latency_ms || 12;
+    meta.textContent = `Confidence: ${conf}% | Latency: ${latency}ms | Model: Calibrated LightGBM`;
+  }
+  if (riskVal) riskVal.textContent = data.risk_score;
 
-  propPredTag.textContent = data.proposed_system.prediction_label;
-  propPredTag.className = `pred-tag ${data.proposed_system.prediction === 1 ? 'phish' : 'legit'}`;
-  propPhishProb.textContent = `${(data.proposed_system.phishing_probability * 100).toFixed(2)}%`;
-  propLegitProb.textContent = `${(data.proposed_system.legitimate_probability * 100).toFixed(2)}%`;
+  // Component Scores
+  const rulesVal = document.getElementById("comp-rules-val");
+  const mlVal = document.getElementById("comp-ml-val");
+  const intelVal = document.getElementById("comp-intel-val");
 
-  const basePredTag = document.getElementById("base-pred-tag");
-  const basePhishProb = document.getElementById("base-phish-prob");
-  const baseLegitProb = document.getElementById("base-legit-prob");
+  if (rulesVal) rulesVal.textContent = `${data.rule_score} / 100`;
+  if (mlVal) mlVal.textContent = `${data.ml_score} / 100`;
+  if (intelVal) intelVal.textContent = `${data.threat_intel_score} / 100`;
 
-  basePredTag.textContent = data.baseline_system.prediction_label;
-  basePredTag.className = `pred-tag ${data.baseline_system.prediction === 1 ? 'phish' : 'legit'}`;
-  basePhishProb.textContent = `${(data.baseline_system.phishing_probability * 100).toFixed(2)}%`;
-  baseLegitProb.textContent = `${(data.baseline_system.legitimate_probability * 100).toFixed(2)}%`;
+  // Recommendation
+  const recBody = document.getElementById("url-rec-body");
+  const recTitle = document.getElementById("url-rec-title");
+  if (recTitle) {
+    recTitle.textContent = status === "SAFE" ? "Safety Recommendation:" : "Defensive Security Action:";
+  }
+  if (recBody) {
+    recBody.textContent = data.recommendation || "Maintain standard cybersecurity hygiene.";
+  }
 
-  // 3. Explainability / Security Attribution
-  const riskList = document.getElementById("risk-factors-list");
-  const safeList = document.getElementById("safe-factors-list");
-  riskList.innerHTML = "";
-  safeList.innerHTML = "";
+  // Checklist Grid
+  const grid = document.getElementById("url-checklist-grid");
+  if (grid) {
+    const checklist = data.checklist || [];
+    grid.innerHTML = checklist.map(item => {
+      const stateClass = item.status === "PASS" ? "pass" : item.status === "FAIL" ? "fail" : "warn";
+      const icon = item.status === "PASS" ? "✓" : item.status === "FAIL" ? "✗" : "!";
 
-  const riskFactors = data.explanation.critical_risk_factors || [];
-  if (riskFactors.length === 0) {
-    riskList.innerHTML = `<div class="factor-item"><div class="factor-desc">No anomalous threat vectors flagged.</div></div>`;
-  } else {
-    riskFactors.forEach(rf => {
-      const el = document.createElement("div");
-      el.className = "factor-item danger-border";
-      el.innerHTML = `
-        <div class="factor-title-row">
-          <span class="factor-title">${rf.title}</span>
-          <span class="severity-pill ${rf.severity.toLowerCase()}">${rf.severity}</span>
+      return `
+        <div class="checklist-item ${stateClass}">
+          <div class="chk-icon">${icon}</div>
+          <div class="chk-info">
+            <div class="chk-name">${escapeHtml(item.factor)}</div>
+            <div class="chk-detail">${escapeHtml(item.detail)}</div>
+          </div>
+          <div class="chk-status-badge ${stateClass}">${item.status}</div>
         </div>
-        <div class="factor-desc">${rf.description}</div>
       `;
-      riskList.appendChild(el);
-    });
+    }).join("");
   }
 
-  const safeFactors = data.explanation.mitigating_factors || [];
-  if (safeFactors.length === 0) {
-    safeList.innerHTML = `<div class="factor-item"><div class="factor-desc">No authentic baseline trust signals detected.</div></div>`;
-  } else {
-    safeFactors.forEach(sf => {
-      const el = document.createElement("div");
-      el.className = "factor-item safe-border";
-      el.innerHTML = `
-        <div class="factor-title-row">
-          <span class="factor-title">${sf.title}</span>
-          <span class="severity-pill safe">Safe</span>
-        </div>
-        <div class="factor-desc">${sf.description}</div>
-      `;
-      safeList.appendChild(el);
-    });
+  // Scroll to result smoothly
+  card.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function copyUrlReport() {
+  if (!lastUrlScanResult) {
+    showToast("No scan report available to copy", "warning");
+    return;
   }
+  const r = lastUrlScanResult;
+  const report = [
+    `========================================`,
+    `PHISHGUARD CYBERSECURITY THREAT REPORT`,
+    `========================================`,
+    `Target: ${r.url}`,
+    `Verdict: ${r.status}`,
+    `Risk Score: ${r.risk_score} / 100`,
+    `Confidence: ${Math.round((r.confidence || 0.95) * 100)}%`,
+    `----------------------------------------`,
+    `Component Scores:`,
+    `- Heuristic Rules: ${r.rule_score} / 100`,
+    `- ML Model:        ${r.ml_score} / 100`,
+    `- Threat Intel:    ${r.threat_intel_score} / 100`,
+    `----------------------------------------`,
+    `Recommendation:`,
+    `${r.recommendation}`,
+    `========================================`
+  ].join("\n");
 
-  // 4. Feature Vector Grid
-  const featuresGrid = document.getElementById("features-grid");
-  const continuousBadge = document.getElementById("continuous-stats-badge");
-  featuresGrid.innerHTML = "";
-
-  const stats = data.continuous_stats;
-  continuousBadge.textContent = `Host: ${stats.hostname} | Entropy: ${stats.entropy} | Len: ${stats.url_length} | Digits: ${stats.digit_count}`;
-
-  Object.entries(data.features).forEach(([featName, featVal]) => {
-    const tile = document.createElement("div");
-    tile.className = "feature-tile";
-    
-    let valClass = "val-good";
-    let valText = "1 (Legit)";
-    if (featVal === -1) {
-      valClass = "val-bad";
-      valText = "-1 (Phish)";
-    } else if (featVal === 0) {
-      valClass = "val-warn";
-      valText = "0 (Suspicious)";
-    }
-
-    tile.innerHTML = `
-      <span class="feat-name" title="${featName}">${featName}</span>
-      <span class="feat-val ${valClass}">${valText}</span>
-    `;
-    featuresGrid.appendChild(tile);
+  navigator.clipboard.writeText(report).then(() => {
+    showToast("Security report copied to clipboard!", "success");
+  }).catch(() => {
+    showToast("Could not copy report automatically", "warning");
   });
 }
 
-// Load Benchmarks and Render Charts
-async function loadBenchmarks() {
+/* =========================================================================
+   4. MESSAGE & EMAIL SCANNER CONTROLLER
+   ========================================================================= */
+
+const MSG_PRESETS = {
+  bank: "URGENT SECURITY ALERT: Your JPMorgan Chase online banking access has been suspended due to unusual login attempts. Verify your account immediately at http://chase-security-update.com.banking-auth-portal.tk to avoid permanent termination. Do not share your OTP.",
+  lottery: "CONGRATULATIONS! You have won the $1,500,000 Coca-Cola International Annual Lottery Prize! To claim your cash prize, click here immediately and submit your social security number and processing fee.",
+  delivery: "DHL Express: Your international package #US992014 cannot be delivered due to an unpaid customs fee of $3.50. Click http://bit.ly/dhl-customs-fee to pay and confirm your address within 24 hours.",
+  safe: "Hi Team, please find attached the meeting notes and presentation slide deck from yesterday's product sync. Let me know if anyone has feedback before we finalize the sprint roadmap on Friday."
+};
+
+function initMessageScanner() {
+  const form = document.getElementById("msg-scan-form");
+  const select = document.getElementById("msg-preset-select");
+  const btnClear = document.getElementById("btn-clear-msg");
+
+  if (select) {
+    select.addEventListener("change", () => {
+      const val = select.value;
+      const textarea = document.getElementById("target-msg-input");
+      if (textarea && MSG_PRESETS[val]) {
+        textarea.value = MSG_PRESETS[val];
+      }
+    });
+  }
+
+  if (btnClear) {
+    btnClear.addEventListener("click", () => {
+      const textarea = document.getElementById("target-msg-input");
+      if (textarea) textarea.value = "";
+      const card = document.getElementById("msg-result-card");
+      if (card) card.classList.add("hidden");
+    });
+  }
+
+  if (form) {
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      runMessageScan();
+    });
+  }
+}
+
+async function runMessageScan() {
+  const textarea = document.getElementById("target-msg-input");
+  const btnSubmit = document.getElementById("btn-submit-msg");
+  const btnText = document.getElementById("msg-btn-text");
+  const btnSpinner = document.getElementById("msg-btn-spinner");
+
+  const message = textarea.value.trim();
+  if (!message) {
+    showToast("Please enter or paste communication text to analyze", "warning");
+    return;
+  }
+
+  if (btnText) btnText.textContent = "Analyzing Patterns...";
+  if (btnSpinner) btnSpinner.classList.remove("hidden");
+  if (btnSubmit) btnSubmit.disabled = true;
+
   try {
-    const res = await fetch("/api/benchmark");
-    if (!res.ok) return;
-    const data = await res.json();
-
-    // Highlights
-    const findings = data.research_findings;
-    document.getElementById("fnr-reduction-stat").textContent = `${findings.fnr_reduction_percentage}%`;
-    document.getElementById("cv-accuracy-stat").textContent = `${(data.grouped_cv_generalization.proposed_champion.accuracy_mean * 100).toFixed(2)}%`;
-    document.getElementById("brier-stat").textContent = `${data.holdout_evaluation.proposed_models.proposed_lightgbm.brier_score}`;
-
-    // Populate Comparison Table
-    const tbody = document.getElementById("benchmark-table-body");
-    tbody.innerHTML = "";
-
-    const allModels = [
-      { name: "Proposed Champion (Calibrated LightGBM)", modal: "Full Multi-Modal (URL+Domain+HTML+SSL)", isChamp: true, data: data.holdout_evaluation.proposed_models.proposed_lightgbm },
-      { name: "Proposed Multi-Modal Stacking Ensemble", modal: "Full Multi-Modal (LGBM+XGB+RF)", isChamp: false, data: data.holdout_evaluation.proposed_models.proposed_stacking },
-      { name: "Proposed Multi-Modal XGBoost", modal: "Full Multi-Modal (URL+Domain+HTML+SSL)", isChamp: false, data: data.holdout_evaluation.proposed_models.proposed_xgboost },
-      { name: "Baseline Random Forest (Reference Paper)", modal: "URL & Domain Only (14 features)", isChamp: false, data: data.holdout_evaluation.baseline_models.random_forest },
-      { name: "Baseline Logistic Regression", modal: "URL & Domain Only (14 features)", isChamp: false, data: data.holdout_evaluation.baseline_models.logistic_regression },
-      { name: "Baseline Decision Tree", modal: "URL & Domain Only (14 features)", isChamp: false, data: data.holdout_evaluation.baseline_models.decision_tree },
-      { name: "Baseline Naïve Bayes", modal: "URL & Domain Only (14 features)", isChamp: false, data: data.holdout_evaluation.baseline_models.naive_bayes },
-      { name: "Baseline K-NN", modal: "URL & Domain Only (14 features)", isChamp: false, data: data.holdout_evaluation.baseline_models.knn },
-    ];
-
-    allModels.forEach(m => {
-      const row = document.createElement("tr");
-      if (m.isChamp) row.className = "champion-row";
-      row.innerHTML = `
-        <td>${m.name}</td>
-        <td>${m.modal}</td>
-        <td>${(m.data.accuracy * 100).toFixed(2)}%</td>
-        <td>${(m.data.recall * 100).toFixed(2)}%</td>
-        <td class="${m.data.false_negative_rate <= 0.005 ? 'safe-text' : 'danger-text'}"><strong>${(m.data.false_negative_rate * 100).toFixed(2)}%</strong></td>
-        <td>${m.data.roc_auc.toFixed(4)}</td>
-        <td>${m.data.brier_score !== undefined ? m.data.brier_score.toFixed(4) : 'N/A'}</td>
-        <td>${m.data.latency_ms.toFixed(2)} ms</td>
-      `;
-      tbody.appendChild(row);
+    const res = await fetch("/api/scan-message", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: message })
     });
 
-    // Render Charts
-    renderROCChart(data);
-    renderGeneralizationChart(data);
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Message scan failed");
+    }
 
+    const data = await res.json();
+    renderMessageResult(data);
+    showToast(`Analysis complete: ${data.status} (Score: ${data.risk_score}/100)`, getToastType(data.status));
   } catch (err) {
-    console.warn("Benchmark data loading failed:", err);
+    console.error("Message scan failed:", err);
+    showToast(err.message || "Failed to analyze message.", "error");
+  } finally {
+    if (btnText) btnText.textContent = "Analyze Message";
+    if (btnSpinner) btnSpinner.classList.add("hidden");
+    if (btnSubmit) btnSubmit.disabled = false;
   }
 }
 
-function renderROCChart(data) {
-  const ctx = document.getElementById("roc-chart");
-  if (!ctx) return;
+function renderMessageResult(data) {
+  const card = document.getElementById("msg-result-card");
+  if (!card) return;
+  card.classList.remove("hidden");
 
-  const bRoc = data.holdout_evaluation.baseline_models.random_forest.roc_curve;
-  const pRoc = data.holdout_evaluation.proposed_models.proposed_lightgbm.roc_curve;
+  // Banner
+  const banner = document.getElementById("msg-verdict-banner");
+  const badge = document.getElementById("msg-verdict-badge");
+  const meta = document.getElementById("msg-result-meta");
+  const riskVal = document.getElementById("msg-risk-val");
 
-  const baselineData = bRoc.fpr.map((x, i) => ({ x: x, y: bRoc.tpr[i] }));
-  const proposedData = pRoc.fpr.map((x, i) => ({ x: x, y: pRoc.tpr[i] }));
+  const status = data.status || "SAFE";
+  if (banner) {
+    banner.className = "verdict-banner " + (
+      status === "SAFE" ? "safe-banner" :
+      status === "SUSPICIOUS" ? "suspicious-banner" : "phishing-banner"
+    );
+  }
 
-  if (rocChartInstance) rocChartInstance.destroy();
+  if (badge) {
+    badge.textContent = status === "PHISHING" ? "HIGH RISK / PHISHING" : status;
+    badge.className = "verdict-badge " + (
+      status === "SAFE" ? "badge-safe" :
+      status === "SUSPICIOUS" ? "badge-suspicious" : "badge-phishing"
+    );
+  }
 
-  rocChartInstance = new Chart(ctx, {
-    type: 'line',
+  const conf = Math.round((data.confidence || 0.9) * 100);
+  const catCount = (data.flagged_categories || []).length;
+  if (meta) meta.textContent = `Confidence: ${conf}% | Threat Categories: ${catCount}`;
+  if (riskVal) riskVal.textContent = data.risk_score;
+
+  // Categories Tags
+  const tagsContainer = document.getElementById("msg-categories-tags");
+  if (tagsContainer) {
+    const cats = data.flagged_categories || [];
+    if (cats.length === 0) {
+      tagsContainer.innerHTML = `<span class="tag tag-clean">✓ No Social Engineering Patterns Detected</span>`;
+    } else {
+      tagsContainer.innerHTML = cats.map(c => `
+        <span class="tag tag-threat">⚠ ${escapeHtml(c)}</span>
+      `).join("");
+    }
+  }
+
+  // Checklist Grid
+  const grid = document.getElementById("msg-checklist-grid");
+  if (grid) {
+    const checklist = data.checklist || [];
+    grid.innerHTML = checklist.map(item => {
+      const stateClass = item.status === "PASS" ? "pass" : item.status === "FAIL" ? "fail" : "warn";
+      const icon = item.status === "PASS" ? "✓" : item.status === "FAIL" ? "✗" : "!";
+
+      return `
+        <div class="checklist-item ${stateClass}">
+          <div class="chk-icon">${icon}</div>
+          <div class="chk-info">
+            <div class="chk-name">${escapeHtml(item.factor)}</div>
+            <div class="chk-detail">${escapeHtml(item.detail)}</div>
+          </div>
+          <div class="chk-status-badge ${stateClass}">${item.status}</div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  // Embedded Links
+  const linksCard = document.getElementById("msg-links-card");
+  const linksList = document.getElementById("msg-embedded-links-list");
+  const embeddedLinks = data.embedded_links || [];
+
+  if (linksCard && linksList) {
+    if (embeddedLinks.length === 0) {
+      linksCard.classList.add("hidden");
+    } else {
+      linksCard.classList.remove("hidden");
+      linksList.innerHTML = embeddedLinks.map(l => `
+        <div class="embedded-link-row">
+          <span class="link-url font-mono">${escapeHtml(l.url)}</span>
+          <span class="link-badge ${l.status.toLowerCase()}">${l.status} (${l.risk_score}/100)</span>
+        </div>
+      `).join("");
+    }
+  }
+
+  card.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+/* =========================================================================
+   5. SCAN HISTORY CONTROLLER
+   ========================================================================= */
+
+function initHistory() {
+  const searchInput = document.getElementById("history-search-input");
+  if (searchInput) {
+    searchInput.addEventListener("input", () => {
+      clearTimeout(searchDebounceTimeout);
+      searchDebounceTimeout = setTimeout(() => {
+        loadHistory();
+      }, 300);
+    });
+  }
+
+  // Filter pills
+  const pills = document.querySelectorAll(".filter-pills .pill");
+  pills.forEach(pill => {
+    pill.addEventListener("click", () => {
+      pills.forEach(p => p.classList.remove("active"));
+      pill.classList.add("active");
+      currentFilter = pill.getAttribute("data-filter") || "";
+      loadHistory();
+    });
+  });
+
+  // Export buttons
+  const btnCsv = document.getElementById("btn-export-csv");
+  const btnJson = document.getElementById("btn-export-json");
+  if (btnCsv) {
+    btnCsv.addEventListener("click", () => {
+      window.open("/api/history/export?format=csv", "_blank");
+      showToast("Downloading CSV export...", "info");
+    });
+  }
+  if (btnJson) {
+    btnJson.addEventListener("click", () => {
+      window.open("/api/history/export?format=json", "_blank");
+      showToast("Downloading JSON export...", "info");
+    });
+  }
+
+  // Clear all button
+  const btnClearAll = document.getElementById("btn-clear-history");
+  if (btnClearAll) {
+    btnClearAll.addEventListener("click", clearAllHistory);
+  }
+}
+
+async function loadHistory() {
+  const tbody = document.getElementById("history-table-tbody");
+  if (!tbody) return;
+
+  const searchInput = document.getElementById("history-search-input");
+  const search = searchInput ? searchInput.value.trim() : "";
+
+  let url = `/api/history?limit=100`;
+  if (search) url += `&search=${encodeURIComponent(search)}`;
+  if (currentFilter) url += `&status_filter=${encodeURIComponent(currentFilter)}`;
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("Could not retrieve scan history");
+    const data = await res.json();
+    const scans = data.scans || [];
+
+    if (scans.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="9" class="text-center py-4 text-muted">No scan history matches your filter.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = scans.map(s => {
+      const statusBadge = getStatusBadge(s.status);
+      const scoreBadge = getScoreBadge(s.risk_score);
+      const dateFormatted = formatTimestamp(s.timestamp);
+      const targetShort = escapeHtml(truncateText(s.target, 48));
+      const scanType = s.scan_type === "url" ? `<span class="type-tag url-tag">URL</span>` : `<span class="type-tag msg-tag">MSG</span>`;
+      const reasonsShort = escapeHtml(truncateText(s.reasons || "Standard pattern check", 40));
+      const confPct = Math.round((s.confidence || 0.95) * 100);
+
+      return `
+        <tr>
+          <td class="text-muted text-sm">#${s.id}</td>
+          <td>${scanType}</td>
+          <td class="font-mono text-break" title="${escapeHtml(s.target)}">${targetShort}</td>
+          <td>${statusBadge}</td>
+          <td>${scoreBadge}</td>
+          <td class="text-sm">${confPct}%</td>
+          <td class="text-muted text-sm" title="${escapeHtml(s.reasons || '')}">${reasonsShort}</td>
+          <td class="text-muted text-sm">${dateFormatted}</td>
+          <td>
+            <button class="btn-delete-icon" onclick="deleteHistoryItem(${s.id})" title="Delete entry">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join("");
+  } catch (err) {
+    console.error("Failed to load history:", err);
+    tbody.innerHTML = `<tr><td colspan="9" class="text-center py-4 text-danger">Failed to load history records.</td></tr>`;
+  }
+}
+
+async function deleteHistoryItem(id) {
+  try {
+    const res = await fetch(`/api/history/${id}`, { method: "DELETE" });
+    if (!res.ok) throw new Error("Delete failed");
+    showToast(`Scan record #${id} deleted`, "info");
+    loadHistory();
+    loadDashboardStats();
+  } catch (err) {
+    showToast("Failed to delete record: " + err.message, "error");
+  }
+}
+
+async function clearAllHistory() {
+  if (!confirm("Are you sure you want to clear all scan history records from the database?")) {
+    return;
+  }
+
+  try {
+    const res = await fetch("/api/history", { method: "DELETE" });
+    if (!res.ok) throw new Error("Clear failed");
+    showToast("Scan history cleared successfully", "success");
+    loadHistory();
+    loadDashboardStats();
+  } catch (err) {
+    showToast("Failed to clear history: " + err.message, "error");
+  }
+}
+
+window.deleteHistoryItem = deleteHistoryItem;
+window.quickInspectScan = function(id) {
+  // Switch to URL scanner and fetch details if URL
+  fetch(`/api/history/${id}`).then(res => res.json()).then(scan => {
+    if (scan.scan_type === "url") {
+      switchView("url-scanner-view");
+      const urlInput = document.getElementById("target-url-input");
+      if (urlInput) {
+        urlInput.value = scan.target;
+        runUrlScan();
+      }
+    } else {
+      switchView("msg-scanner-view");
+      const msgInput = document.getElementById("target-msg-input");
+      if (msgInput) {
+        msgInput.value = scan.target;
+        runMessageScan();
+      }
+    }
+  }).catch(err => {
+    console.error("Inspect failed:", err);
+  });
+};
+
+/* =========================================================================
+   6. SECURITY STATISTICS CONTROLLER
+   ========================================================================= */
+
+function initStatistics() {
+  // Initialized on switchView
+}
+
+async function loadStatisticsView() {
+  try {
+    const res = await fetch("/api/statistics");
+    if (!res.ok) return;
+    const stats = await res.json();
+
+    const total = stats.total_scans || 0;
+    const safe = stats.safe_count || 0;
+    const suspicious = stats.suspicious_count || 0;
+    const phishing = stats.phishing_count || 0;
+
+    const totalEl = document.getElementById("stats-total-count");
+    const avgScoreEl = document.getElementById("stats-avg-score");
+    const ratioEl = document.getElementById("stats-phish-ratio");
+
+    if (totalEl) totalEl.textContent = total.toLocaleString();
+
+    // Average score estimation
+    const avgScore = total > 0 ? Math.round(((safe * 15) + (suspicious * 45) + (phishing * 85)) / total) : 0;
+    if (avgScoreEl) avgScoreEl.textContent = `${avgScore} / 100`;
+
+    const phishRatio = total > 0 ? Math.round((phishing / total) * 100) : 0;
+    if (ratioEl) ratioEl.textContent = `${phishRatio}%`;
+
+    // Render Doughnut Chart
+    renderStatsDoughnut(safe, suspicious, phishing);
+  } catch (err) {
+    console.error("Failed to load statistics view:", err);
+  }
+}
+
+function renderStatsDoughnut(safe, suspicious, phishing) {
+  const canvas = document.getElementById("statsDoughnutChart");
+  if (!canvas) return;
+
+  if (statsChartInstance) {
+    statsChartInstance.destroy();
+  }
+
+  const ctx = canvas.getContext("2d");
+  statsChartInstance = new Chart(ctx, {
+    type: "doughnut",
     data: {
-      datasets: [
-        {
-          label: `Proposed Multi-Modal (AUC = ${data.holdout_evaluation.proposed_models.proposed_lightgbm.roc_auc.toFixed(3)})`,
-          data: proposedData,
-          borderColor: '#10b981',
-          backgroundColor: 'rgba(16, 185, 129, 0.1)',
-          borderWidth: 3,
-          fill: true,
-          tension: 0.1
-        },
-        {
-          label: `Baseline RF (AUC = ${data.holdout_evaluation.baseline_models.random_forest.roc_auc.toFixed(3)})`,
-          data: baselineData,
-          borderColor: '#f43f5e',
-          borderWidth: 2,
-          borderDash: [5, 5],
-          fill: false,
-          tension: 0.1
-        }
-      ]
+      labels: ["Safe Hits", "Suspicious Anomalies", "Phishing Threats"],
+      datasets: [{
+        data: [safe, suspicious, phishing],
+        backgroundColor: ["#10b981", "#f59e0b", "#ef4444"],
+        borderColor: "#182234",
+        borderWidth: 3
+      }]
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      scales: {
-        x: {
-          type: 'linear',
-          title: { display: true, text: 'False Positive Rate (FPR)', color: '#94a3b8' },
-          grid: { color: 'rgba(255, 255, 255, 0.05)' },
-          ticks: { color: '#94a3b8' }
-        },
-        y: {
-          title: { display: true, text: 'True Positive Rate (Recall)', color: '#94a3b8' },
-          grid: { color: 'rgba(255, 255, 255, 0.05)' },
-          ticks: { color: '#94a3b8' },
-          min: 0.8,
-          max: 1.0
+      plugins: {
+        legend: {
+          position: "bottom",
+          labels: { color: "#94a3b8", font: { family: "'Plus Jakarta Sans', sans-serif" }, padding: 16 }
         }
       },
-      plugins: {
-        legend: { labels: { color: '#f8fafc', font: { family: 'Plus Jakarta Sans' } } }
-      }
+      cutout: "65%"
     }
   });
 }
 
-function renderGeneralizationChart(data) {
-  const ctx = document.getElementById("generalization-chart");
-  if (!ctx) return;
+/* =========================================================================
+   7. SETTINGS CONTROLLER
+   ========================================================================= */
 
-  const baseCv = data.grouped_cv_generalization.baseline_rf;
-  const propCv = data.grouped_cv_generalization.proposed_champion;
+function initSettings() {
+  const sliderRules = document.getElementById("slider-weight-rules");
+  const sliderMl = document.getElementById("slider-weight-ml");
+  const sliderIntel = document.getElementById("slider-weight-intel");
 
-  if (genChartInstance) genChartInstance.destroy();
+  const dispRules = document.getElementById("weight-rules-disp");
+  const dispMl = document.getElementById("weight-ml-disp");
+  const dispIntel = document.getElementById("weight-intel-disp");
 
-  genChartInstance = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: ['Accuracy', 'Recall (Detection Rate)', 'F1-Score', '1 - FNR (Safety)'],
-      datasets: [
-        {
-          label: 'Baseline (URL/Domain Only)',
-          data: [
-            baseCv.accuracy_mean * 100,
-            baseCv.recall_mean * 100,
-            baseCv.f1_score_mean * 100,
-            (1 - baseCv.false_negative_rate_mean) * 100
-          ],
-          backgroundColor: 'rgba(148, 163, 184, 0.6)',
-          borderColor: '#94a3b8',
-          borderWidth: 1
-        },
-        {
-          label: 'Proposed (Multi-Modal Calibrated)',
-          data: [
-            propCv.accuracy_mean * 100,
-            propCv.recall_mean * 100,
-            propCv.f1_score_mean * 100,
-            (1 - propCv.false_negative_rate_mean) * 100
-          ],
-          backgroundColor: 'rgba(6, 182, 212, 0.75)',
-          borderColor: '#06b6d4',
-          borderWidth: 1
-        }
-      ]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      scales: {
-        y: {
-          min: 90,
-          max: 100,
-          title: { display: true, text: 'Score (%)', color: '#94a3b8' },
-          grid: { color: 'rgba(255, 255, 255, 0.05)' },
-          ticks: { color: '#94a3b8' }
-        },
-        x: {
-          grid: { display: false },
-          ticks: { color: '#94a3b8' }
-        }
-      },
-      plugins: {
-        legend: { labels: { color: '#f8fafc', font: { family: 'Plus Jakarta Sans' } } }
+  if (sliderRules && dispRules) {
+    sliderRules.addEventListener("input", () => {
+      dispRules.textContent = `${sliderRules.value}%`;
+    });
+  }
+  if (sliderMl && dispMl) {
+    sliderMl.addEventListener("input", () => {
+      dispMl.textContent = `${sliderMl.value}%`;
+    });
+  }
+  if (sliderIntel && dispIntel) {
+    sliderIntel.addEventListener("input", () => {
+      dispIntel.textContent = `${sliderIntel.value}%`;
+    });
+  }
+
+  const btnReset = document.getElementById("btn-reset-weights");
+  if (btnReset) {
+    btnReset.addEventListener("click", () => {
+      if (sliderRules) sliderRules.value = 35;
+      if (sliderMl) sliderMl.value = 45;
+      if (sliderIntel) sliderIntel.value = 20;
+      if (dispRules) dispRules.textContent = "35%";
+      if (dispMl) dispMl.textContent = "45%";
+      if (dispIntel) dispIntel.textContent = "20%";
+      showToast("Reset weights to defaults (35/45/20)", "info");
+    });
+  }
+
+  const form = document.getElementById("settings-form");
+  if (form) {
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      try {
+        const payload = {
+          weight_rules: parseFloat(sliderRules.value) / 100,
+          weight_ml: parseFloat(sliderMl.value) / 100,
+          weight_intel: parseFloat(sliderIntel.value) / 100
+        };
+
+        const res = await fetch("/api/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) throw new Error("Save settings failed");
+        showToast("Engine configuration saved successfully!", "success");
+      } catch (err) {
+        showToast("Could not save settings: " + err.message, "error");
       }
-    }
-  });
+    });
+  }
+}
+
+async function loadSettings() {
+  try {
+    const res = await fetch("/api/settings");
+    if (!res.ok) return;
+    const s = await res.json();
+
+    const sliderRules = document.getElementById("slider-weight-rules");
+    const sliderMl = document.getElementById("slider-weight-ml");
+    const sliderIntel = document.getElementById("slider-weight-intel");
+
+    const dispRules = document.getElementById("weight-rules-disp");
+    const dispMl = document.getElementById("weight-ml-disp");
+    const dispIntel = document.getElementById("weight-intel-disp");
+
+    const rVal = Math.round((s.weight_rules || 0.35) * 100);
+    const mVal = Math.round((s.weight_ml || 0.45) * 100);
+    const iVal = Math.round((s.weight_intel || 0.20) * 100);
+
+    if (sliderRules) sliderRules.value = rVal;
+    if (sliderMl) sliderMl.value = mVal;
+    if (sliderIntel) sliderIntel.value = iVal;
+
+    if (dispRules) dispRules.textContent = `${rVal}%`;
+    if (dispMl) dispMl.textContent = `${mVal}%`;
+    if (dispIntel) dispIntel.textContent = `${iVal}%`;
+  } catch (err) {
+    console.warn("Failed to load settings:", err);
+  }
+}
+
+/* =========================================================================
+   8. FEEDBACK / FALSE POSITIVE MODAL
+   ========================================================================= */
+
+function initFeedbackModal() {
+  const modal = document.getElementById("feedback-modal");
+  const btnClose = document.getElementById("btn-close-modal");
+  const btnCancel = document.getElementById("btn-cancel-feedback");
+  const form = document.getElementById("feedback-form");
+
+  function closeModal() {
+    if (modal) modal.classList.add("hidden");
+  }
+
+  if (btnClose) btnClose.addEventListener("click", closeModal);
+  if (btnCancel) btnCancel.addEventListener("click", closeModal);
+
+  if (modal) {
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) closeModal();
+    });
+  }
+
+  if (form) {
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const target = document.getElementById("feedback-target-input").value;
+      const type = document.getElementById("feedback-type-select").value;
+      const comments = document.getElementById("feedback-comments-input").value;
+
+      try {
+        const res = await fetch("/api/feedback", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            target: target,
+            feedback_type: type,
+            comments: comments
+          })
+        });
+
+        if (!res.ok) throw new Error("Feedback submission failed");
+        showToast("Feedback submitted! Thank you for improving detection accuracy.", "success");
+        closeModal();
+      } catch (err) {
+        showToast("Error submitting feedback: " + err.message, "error");
+      }
+    });
+  }
+}
+
+function openFeedbackModal(target) {
+  const modal = document.getElementById("feedback-modal");
+  const input = document.getElementById("feedback-target-input");
+  if (input) input.value = target || "";
+  if (modal) modal.classList.remove("hidden");
+}
+
+/* =========================================================================
+   9. UTILITIES & HELPERS
+   ========================================================================= */
+
+function getStatusBadge(status) {
+  const s = (status || "SAFE").toUpperCase();
+  if (s === "SAFE") {
+    return `<span class="badge-status badge-safe">SAFE</span>`;
+  } else if (s === "SUSPICIOUS") {
+    return `<span class="badge-status badge-suspicious">SUSPICIOUS</span>`;
+  } else {
+    return `<span class="badge-status badge-phishing">PHISHING</span>`;
+  }
+}
+
+function getScoreBadge(score) {
+  const num = Math.round(score || 0);
+  let color = "text-green";
+  if (num > 30 && num <= 60) color = "text-amber";
+  if (num > 60) color = "text-red";
+  return `<span class="score-pill ${color}"><strong>${num}</strong> / 100</span>`;
+}
+
+function getToastType(status) {
+  if (status === "SAFE") return "success";
+  if (status === "SUSPICIOUS") return "warning";
+  return "error";
+}
+
+function showToast(message, type = "info") {
+  const container = document.getElementById("toast-container");
+  if (!container) return;
+
+  const toast = document.createElement("div");
+  toast.className = `toast toast-${type}`;
+  toast.innerHTML = `
+    <div class="toast-content">
+      <span>${escapeHtml(message)}</span>
+    </div>
+  `;
+
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.classList.add("fade-out");
+    setTimeout(() => toast.remove(), 400);
+  }, 3500);
+}
+
+function formatTimestamp(isoString) {
+  if (!isoString) return "--";
+  try {
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return isoString;
+    return d.toLocaleString([], {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  } catch {
+    return isoString;
+  }
+}
+
+function truncateText(str, maxLen = 45) {
+  if (!str) return "";
+  if (str.length <= maxLen) return str;
+  return str.slice(0, maxLen) + "…";
+}
+
+function escapeHtml(text) {
+  if (!text) return "";
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }

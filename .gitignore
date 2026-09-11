@@ -14,3 +14,4 @@ __pycache__/
 data/phishing_uci_dataset.csv
 .DS_Store
 *.log
+*.db
