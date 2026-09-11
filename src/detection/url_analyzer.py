@@ -47,16 +47,28 @@ class URLAnalyzer:
         has_scheme = raw_url.startswith("http://") or raw_url.startswith("https://")
         normalized_url = raw_url if has_scheme else ("https://" + raw_url)
 
-        parsed = urllib.parse.urlparse(normalized_url)
-        tld_info = self.tld_extractor(normalized_url)
-
-        domain = getattr(tld_info, "top_domain_under_public_suffix", None) or getattr(tld_info, "domain", "") or parsed.netloc.split(":")[0]
-        hostname = parsed.netloc.split(":")[0]
-        subdomain = tld_info.subdomain
-        tld = tld_info.suffix.lower()
-        path = parsed.path
-        query = parsed.query
-        port = parsed.port
+        try:
+            parsed = urllib.parse.urlparse(normalized_url)
+            tld_info = self.tld_extractor(normalized_url)
+            domain = getattr(tld_info, "top_domain_under_public_suffix", None) or getattr(tld_info, "domain", "") or parsed.netloc.split(":")[0]
+            hostname = parsed.netloc.split(":")[0]
+            subdomain = tld_info.subdomain
+            tld = tld_info.suffix.lower()
+            path = parsed.path
+            query = parsed.query
+            try:
+                port = parsed.port
+            except (ValueError, Exception):
+                port = -1
+        except (ValueError, Exception):
+            parsed = urllib.parse.urlsplit("https://malformed-target.invalid")
+            domain = "malformed-target.invalid"
+            hostname = "malformed-target.invalid"
+            subdomain = ""
+            tld = "invalid"
+            path = ""
+            query = ""
+            port = -1
 
         # Threat Intelligence evaluation
         threat_data = ThreatIntel.evaluate_threat_reputation(domain, hostname, tld, raw_url)

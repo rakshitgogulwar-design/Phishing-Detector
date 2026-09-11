@@ -103,7 +103,7 @@ class MultiModalFeatureExtractor:
     def __init__(self, timeout: float = 1.0):
         self.timeout = timeout
         # Using default cache for fast repeated parsing
-        self.extractor = tldextract.TLDExtract(cache_dir=True)
+        self.extractor = tldextract.TLDExtract(cache_dir=None)
 
     def extract_all(self, url: str, html_content: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -118,11 +118,17 @@ class MultiModalFeatureExtractor:
         else:
             url_with_scheme = raw_input
 
-        parsed = urllib.parse.urlparse(url_with_scheme)
-        ext = self.extractor(url_with_scheme)
-        domain = getattr(ext, "top_domain_under_public_suffix", None) or getattr(ext, "registered_domain", "") or parsed.netloc.split(":")[0]
-        hostname = parsed.netloc.split(":")[0]
-        tld = ext.suffix.lower()
+        try:
+            parsed = urllib.parse.urlparse(url_with_scheme)
+            ext = self.extractor(url_with_scheme)
+            domain = getattr(ext, "top_domain_under_public_suffix", None) or getattr(ext, "registered_domain", "") or parsed.netloc.split(":")[0]
+            hostname = parsed.netloc.split(":")[0]
+            tld = ext.suffix.lower()
+        except (ValueError, Exception):
+            parsed = urllib.parse.urlsplit("https://malformed-target.invalid")
+            domain = "malformed-target.invalid"
+            hostname = "malformed-target.invalid"
+            tld = "invalid"
 
         response_code = 200
         headers = {}

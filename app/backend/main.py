@@ -14,8 +14,10 @@ import json
 import time
 import io
 import csv
+from collections import defaultdict
+import threading
 from typing import Optional, Dict, Any, List
-from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi import FastAPI, HTTPException, Query, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse
@@ -38,6 +40,52 @@ app = FastAPI(
     description="Professional Multi-Modal Cybersecurity Phishing Detection & Threat Intelligence Platform",
     version="3.0.0"
 )
+
+# In-Memory Thread-Safe Rate Limiter
+_rate_limit_lock = threading.Lock()
+_client_request_history: Dict[str, List[float]] = defaultdict(list)
+RATE_LIMIT_PER_MINUTE = int(os.environ.get("PHISHGUARD_RATE_LIMIT", "120"))
+RATE_LIMIT_WINDOW = 60.0
+
+@app.middleware("http")
+async def security_and_rate_limit_middleware(request: Request, call_next):
+    # Determine Client IP (honoring reverse-proxy X-Forwarded-For if present)
+    forwarded = request.headers.get("x-forwarded-for")
+    client_ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "127.0.0.1")
+    now = time.time()
+    path = request.url.path
+
+    # Enforce rate limiting on active scan & feedback endpoints
+    if path in ("/api/scan-url", "/api/scan-message", "/api/analyze", "/api/feedback"):
+        with _rate_limit_lock:
+            timestamps = [t for t in _client_request_history[client_ip] if now - t < RATE_LIMIT_WINDOW]
+            if len(timestamps) >= RATE_LIMIT_PER_MINUTE:
+                _client_request_history[client_ip] = timestamps
+                return Response(
+                    content=json.dumps({"detail": "Rate limit exceeded (120 req/min). Please wait a moment before sending more scans."}),
+                    status_code=429,
+                    media_type="application/json",
+                    headers={"Retry-After": "60"}
+                )
+            timestamps.append(now)
+            _client_request_history[client_ip] = timestamps
+
+    response = await call_next(request)
+
+    # OWASP Recommended Hardening Headers
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data:; "
+        "connect-src 'self';"
+    )
+    return response
 
 app.add_middleware(
     CORSMiddleware,
@@ -187,6 +235,7 @@ def scan_message(req: MessageScanRequest):
         "reasons": result["reasons"],
         "checklist": result["checklist"],
         "categories_flagged": result["categories_flagged"],
+        "flagged_categories": result["categories_flagged"],
         "recommendations": result["recommendations"],
         "embedded_urls_analyzed": result["embedded_urls_analyzed"],
         "stats": result["stats"],

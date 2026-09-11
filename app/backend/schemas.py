@@ -7,21 +7,21 @@ from pydantic import BaseModel, Field
 
 
 class URLScanRequest(BaseModel):
-    url: str = Field(..., description="Target URL to inspect for phishing indicators")
-    html_content: Optional[str] = Field(None, description="Optional raw HTML content for DOM inspection")
+    url: str = Field(..., min_length=3, max_length=4096, description="Target URL to inspect for phishing indicators")
+    html_content: Optional[str] = Field(None, max_length=1_000_000, description="Optional raw HTML content for DOM inspection")
     save_to_history: bool = Field(True, description="Whether to automatically store scan in history")
 
 
 class MessageScanRequest(BaseModel):
-    message: str = Field(..., description="Raw text of email, SMS, or chat message to analyze")
+    message: str = Field(..., min_length=1, max_length=50_000, description="Raw text of email, SMS, or chat message to analyze")
     save_to_history: bool = Field(True, description="Whether to automatically store scan in history")
 
 
 class FeedbackRequest(BaseModel):
     scan_id: Optional[int] = Field(None, description="ID of the related scan if available")
-    target: str = Field(..., description="The URL or message that was misclassified")
-    reported_as: str = Field(..., description="'false_positive', 'false_negative', or 'other'")
-    comments: Optional[str] = Field(None, description="User explanation / details")
+    target: str = Field(..., min_length=1, max_length=4096, description="The URL or message that was misclassified")
+    reported_as: str = Field(..., pattern=r"^(false_positive|false_negative|other)$", description="'false_positive', 'false_negative', or 'other'")
+    comments: Optional[str] = Field(None, max_length=2000, description="User explanation / details")
 
 
 class SettingsUpdateRequest(BaseModel):
