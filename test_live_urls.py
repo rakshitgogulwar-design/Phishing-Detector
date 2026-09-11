@@ -8,19 +8,23 @@ prop = ProposedMultiModalPipeline.load('models/proposed_champion.joblib')
 base = BaselinePipeline.load('models/baseline_rf.joblib')
 
 test_cases = [
-    # Legitimate websites
-    ('https://google.com', 0, "Official Search"),
-    ('https://github.com', 0, "Official Code Hosting"),
-    ('https://amazon.com', 0, "Official E-Commerce"),
-    ('https://wikipedia.org', 0, "Official Encyclopedia"),
-    ('https://stackoverflow.com', 0, "Official Developer Forum"),
-    ('https://microsoft.com', 0, "Official Enterprise"),
-    ('https://apple.com', 0, "Official Tech"),
-    ('https://netflix.com', 0, "Official Streaming"),
+    # Legitimate modern websites and SPAs
+    ('https://google.com', 0, "Google Search"),
+    ('https://github.com', 0, "GitHub"),
+    ('https://amazon.com', 0, "Amazon"),
+    ('https://wikipedia.org', 0, "Wikipedia"),
+    ('https://stackoverflow.com', 0, "StackOverflow"),
+    ('https://microsoft.com', 0, "Microsoft"),
+    ('https://apple.com', 0, "Apple"),
+    ('https://netflix.com', 0, "Netflix"),
+    ('https://chatgpt.com', 0, "ChatGPT Main"),
+    ('https://chat.openai.com', 0, "ChatGPT OpenAI"),
+    ('chatgpt.com', 0, "ChatGPT Bare Domain"),
+    ('openai.com', 0, "OpenAI Bare Domain"),
 
     # Phishing attacks
     ('http://chase-security-update.com.banking-auth-portal.tk/login.php', 1, "Subdomain Spoofing"),
-    ('http://192.168.1.105:8080/auth/paypal/verify-account', 1, "Raw IP + Nonstandard Port"),
+    ('http://192.168.1.105:8080/auth/paypal/verify-account', 1, "Raw IP + Port 8080"),
     ('http://bit.ly/secure-login-microsoft-portal', 1, "Shortener Phishing"),
     ('http://paypal-account-verification-alert.ru/login', 1, "Keyword Deception"),
 ]

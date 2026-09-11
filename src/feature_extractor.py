@@ -31,7 +31,8 @@ TRUSTED_CDN_DOMAINS = {
     "googleapis.com", "gstatic.com", "fbcdn.net", "twimg.com", "wp.com", "azureedge.net",
     "cdn.jsdelivr.net", "cdnjs.cloudflare.com", "nflxext.com", "nflximg.net", "nflxvideo.net",
     "githubassets.com", "ytimg.com", "ggpht.com", "googleusercontent.com", "s-microsoft.com",
-    "static-amazon.com", "ssl-images-amazon.com", "apple-mapkit.com", "cdn-apple.com"
+    "static-amazon.com", "ssl-images-amazon.com", "apple-mapkit.com", "cdn-apple.com",
+    "oaistatic.com", "oaiusercontent.com", "openai.com", "chatgpt.com"
 }
 
 
@@ -52,10 +53,14 @@ class MultiModalFeatureExtractor:
         Extracts full 30-feature vector and auxiliary continuous statistics from a URL.
         If html_content is None, attempts a safe live fetch with short timeout.
         """
-        if not url.startswith("http://") and not url.startswith("https://"):
-            url_with_scheme = "http://" + url
+        raw_input = url.strip()
+        has_explicit_scheme = raw_input.startswith("http://") or raw_input.startswith("https://")
+        
+        # In modern web, bare domains default to HTTPS exploration
+        if not has_explicit_scheme:
+            url_with_scheme = "https://" + raw_input
         else:
-            url_with_scheme = url
+            url_with_scheme = raw_input
 
         parsed = urllib.parse.urlparse(url_with_scheme)
         ext = self.extractor(url_with_scheme)
@@ -65,23 +70,26 @@ class MultiModalFeatureExtractor:
         response_code = 200
         headers = {}
         redirect_count = 0
-        fetched_live = False
+        final_scheme = parsed.scheme or "https"
 
         if html_content is None:
-            try:
-                resp = requests.get(
-                    url_with_scheme,
-                    timeout=self.timeout,
-                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
-                    allow_redirects=True
-                )
-                html_content = resp.text
-                response_code = resp.status_code
-                headers = dict(resp.headers)
-                redirect_count = len(resp.history)
-                fetched_live = True
-            except Exception:
-                html_content = ""
+            # Try fetching via HTTPS first, fallback to HTTP if needed
+            for try_url in ([url_with_scheme] if has_explicit_scheme else [f"https://{raw_input}", f"http://{raw_input}"]):
+                try:
+                    resp = requests.get(
+                        try_url,
+                        timeout=self.timeout,
+                        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
+                        allow_redirects=True
+                    )
+                    html_content = resp.text
+                    response_code = resp.status_code
+                    headers = dict(resp.headers)
+                    redirect_count = len(resp.history)
+                    final_scheme = urllib.parse.urlparse(resp.url).scheme
+                    break
+                except Exception:
+                    html_content = ""
 
         soup = BeautifulSoup(html_content, "html.parser") if html_content else None
 
@@ -90,10 +98,10 @@ class MultiModalFeatureExtractor:
 
         # 1. URL & Domain Baseline Features
         f_ip = self._check_ip_address(hostname)
-        f_url_len = self._check_url_length(url)
+        f_url_len = self._check_url_length(raw_input)
         f_shortening = self._check_shortening(hostname)
-        f_at = self._check_at_symbol(url)
-        f_double_slash = self._check_double_slash(url)
+        f_at = self._check_at_symbol(raw_input)
+        f_double_slash = self._check_double_slash(raw_input)
         f_prefix_suffix = self._check_prefix_suffix(ext.domain or hostname)
         f_subdomain = self._check_subdomains(ext.subdomain)
         f_domain_reg = self._check_domain_reg_length(domain, dns_resolves)
@@ -119,7 +127,7 @@ class MultiModalFeatureExtractor:
         f_iframe = self._check_iframe(soup)
 
         # 3. Security & Reputation Features
-        f_ssl = self._check_ssl(parsed.scheme, hostname)
+        f_ssl = self._check_ssl(final_scheme, hostname)
         f_web_traffic = self._check_web_traffic(domain, dns_resolves)
         f_page_rank = self._check_page_rank(domain, dns_resolves)
         f_links_pointing = self._check_links_pointing(soup)
@@ -319,14 +327,16 @@ class MultiModalFeatureExtractor:
             href = a.get("href", "").strip().lower()
             if href:
                 total_anchors += 1
-                if href == "#" or href.startswith("javascript:void(0)") or (href.startswith("http") and not self._is_trusted_origin(href, domain)):
-                    unsafe_anchors += 1
+                # In modern SPAs, # or javascript:void(0) or relative paths (/...) are standard internal UI controls
+                if href.startswith("http://") or href.startswith("https://"):
+                    if not self._is_trusted_origin(href, domain):
+                        unsafe_anchors += 1
         if total_anchors == 0:
             return 1
         ratio = unsafe_anchors / total_anchors
-        if ratio < 0.31:
+        if ratio < 0.35:
             return 1
-        elif 0.31 <= ratio <= 0.67:
+        elif 0.35 <= ratio <= 0.67:
             return 0
         return -1
 
@@ -339,14 +349,14 @@ class MultiModalFeatureExtractor:
             link = tag.get("href") or tag.get("src") or ""
             if link:
                 total_tags += 1
-                if link.startswith("http") and not self._is_trusted_origin(link, domain):
+                if (link.startswith("http://") or link.startswith("https://")) and not self._is_trusted_origin(link, domain):
                     ext_tags += 1
         if total_tags == 0:
             return 1
         ratio = ext_tags / total_tags
-        if ratio < 0.25:
+        if ratio < 0.35:
             return 1
-        elif 0.25 <= ratio <= 0.75:
+        elif 0.35 <= ratio <= 0.75:
             return 0
         return -1
 
@@ -358,10 +368,13 @@ class MultiModalFeatureExtractor:
             return 1
         for form in forms:
             action = form.get("action", "").strip().lower()
-            if not action or action == "about:blank":
+            # In HTML5/React apps, empty action or missing action defaults to same-origin POST
+            if not action or action == "#" or action.startswith("/"):
+                continue
+            if action == "about:blank":
                 return -1
-            if action.startswith("http") and domain and domain not in action:
-                return 0
+            if (action.startswith("http://") or action.startswith("https://")) and not self._is_trusted_origin(action, domain):
+                return 0  # External cross-domain form target
         return 1
 
     def _check_submitting_to_email(self, soup: Optional[BeautifulSoup]) -> int:
@@ -418,7 +431,7 @@ class MultiModalFeatureExtractor:
         return -1  # Plain HTTP
 
     def _check_web_traffic(self, domain: str, dns_resolves: bool) -> int:
-        top_domains = {"google.com", "youtube.com", "facebook.com", "amazon.com", "yahoo.com", "wikipedia.org", "twitter.com", "instagram.com", "linkedin.com", "reddit.com", "netflix.com", "github.com", "microsoft.com", "apple.com", "stackoverflow.com", "cloudflare.com"}
+        top_domains = {"google.com", "youtube.com", "facebook.com", "amazon.com", "yahoo.com", "wikipedia.org", "twitter.com", "instagram.com", "linkedin.com", "reddit.com", "netflix.com", "github.com", "microsoft.com", "apple.com", "stackoverflow.com", "cloudflare.com", "openai.com", "chatgpt.com"}
         if domain in top_domains:
             return 1
         return 0 if dns_resolves else -1
