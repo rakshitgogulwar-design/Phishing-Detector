@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AegisPhish | Multi-Modal AI Phishing Detection & Explainability Platform</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Top Navigation Bar -->
+    <header class="top-nav">
+      <div class="brand-group">
+        <div class="logo-badge">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+        </div>
+        <div>
+          <div class="brand-title">AegisPhish <span class="badge-tag">RESEARCH GRADE</span></div>
+          <div class="brand-subtitle">Multi-Modal Explainable AI & Zero-Day Threat Generalization</div>
+        </div>
+      </div>
+
+      <nav class="nav-tabs">
+        <button class="tab-btn active" data-tab="scanner-tab" id="nav-scanner-btn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m10 15 5-3-5-3v6Z"/></svg>
+          Live Scanner & Explainability
+        </button>
+        <button class="tab-btn" data-tab="benchmark-tab" id="nav-benchmark-btn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+          Scientific Benchmarks
+        </button>
+        <button class="tab-btn" data-tab="modalities-tab" id="nav-modalities-btn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>
+          Multi-Modal Architecture
+        </button>
+      </nav>
+
+      <div class="system-status">
+        <span class="status-dot"></span>
+        <span class="status-label">Pipeline Active (Calibrated LightGBM)</span>
+      </div>
+    </header>
+
+    <!-- Main Content Container -->
+    <main class="main-container">
+
+      <!-- TAB 1: LIVE SCANNER & EXPLAINABILITY -->
+      <section id="scanner-tab" class="tab-content active">
+        
+        <!-- Input Hero Section -->
+        <div class="glass-card scanner-card">
+          <div class="card-header-flex">
+            <div>
+              <h2 class="section-heading">Multi-Modal Threat Inspection Engine</h2>
+              <p class="section-sub">Extracts URL lexical patterns, domain reputation, HTML structure, and security certificates in real-time.</p>
+            </div>
+            <div class="preset-dropdown-container">
+              <label for="preset-selector" class="preset-label">Quick Test Presets:</label>
+              <select id="preset-selector" class="preset-select">
+                <option value="">-- Choose Sample Attack or Safe Site --</option>
+              </select>
+            </div>
+          </div>
+
+          <form id="scan-form" class="scan-form">
+            <div class="input-wrapper">
+              <div class="input-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+              </div>
+              <input type="text" id="url-input" class="url-input" placeholder="Enter target URL (e.g. http://chase-security-update.com.banking-auth-portal.tk/login.php)" required>
+              <button type="submit" id="submit-scan-btn" class="btn-primary">
+                <span id="btn-text">Analyze Target</span>
+                <span id="btn-spinner" class="spinner hidden"></span>
+              </button>
+            </div>
+
+            <!-- Advanced HTML Payload Toggle -->
+            <details class="html-details">
+              <summary class="html-summary">
+                <span>Optional: Supply Custom HTML Source / Payload for DOM Inspection</span>
+              </summary>
+              <div class="html-textarea-wrapper">
+                <textarea id="html-input" class="html-textarea" placeholder="Paste raw HTML source code here to evaluate form actions (SFH), anchor distributions, iframe embeds, and anti-analysis scripts..."></textarea>
+              </div>
+            </details>
+          </form>
+        </div>
+
+        <!-- Scanning Results Section (Dynamic) -->
+        <div id="results-placeholder" class="placeholder-state">
+          <div class="placeholder-icon">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </div>
+          <h3>Ready for Multi-Modal Security Analysis</h3>
+          <p>Enter any URL or select a preset threat sample above to generate live predictions, calibrated risk scores, and SHAP explainability diagnostics.</p>
+        </div>
+
+        <div id="results-container" class="results-container hidden">
+          
+          <!-- Master Verdict Banner -->
+          <div id="verdict-banner" class="verdict-banner">
+            <div class="verdict-main">
+              <div class="verdict-badge-wrapper">
+                <div id="verdict-icon" class="verdict-icon"></div>
+                <div>
+                  <div class="verdict-tag" id="verdict-tag">PHISHING DETECTED</div>
+                  <h1 class="verdict-title" id="verdict-title">High Confidence Phishing Attack</h1>
+                </div>
+              </div>
+              <p class="verdict-summary" id="verdict-summary"></p>
+            </div>
+
+            <div class="verdict-metrics">
+              <div class="metric-box">
+                <div class="metric-label">Phishing Risk Score</div>
+                <div class="metric-val" id="risk-score-val">99.8%</div>
+                <div class="risk-bar-track">
+                  <div class="risk-bar-fill" id="risk-bar-fill"></div>
+                </div>
+              </div>
+              <div class="metric-box">
+                <div class="metric-label">Total Latency</div>
+                <div class="metric-val accent-cyan" id="latency-val">42 ms</div>
+                <div class="metric-sub" id="feat-latency-val">Extraction: 38ms | Model: 0.03ms</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Comparison Grid: Proposed Multi-Modal vs Baseline URL-Only -->
+          <div class="comparison-grid">
+            
+            <!-- Proposed System Card -->
+            <div class="glass-card model-card champion-card">
+              <div class="card-badge champion-badge">CHAMPION SYSTEM</div>
+              <div class="card-header">
+                <div class="model-title">Proposed Multi-Modal System</div>
+                <div class="model-tech">Calibrated LightGBM + 30 Multi-Modal Features</div>
+              </div>
+
+              <div class="model-prediction-row">
+                <div class="pred-label">Verdict:</div>
+                <div class="pred-tag" id="prop-pred-tag">PHISHING</div>
+              </div>
+
+              <div class="prob-breakdown">
+                <div class="prob-row">
+                  <span>Phishing Probability (Calibrated):</span>
+                  <strong id="prop-phish-prob" class="danger-text">99.8%</strong>
+                </div>
+                <div class="prob-row">
+                  <span>Legitimacy Confidence:</span>
+                  <strong id="prop-legit-prob" class="safe-text">0.2%</strong>
+                </div>
+              </div>
+
+              <div class="model-features-note">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 13 4 4L19 7"/></svg>
+                Evaluates URL Lexical + DNS + DOM Structure + SFH Actions + SSL Integrity
+              </div>
+            </div>
+
+            <!-- Baseline Reference System Card -->
+            <div class="glass-card model-card baseline-card">
+              <div class="card-badge baseline-badge">REFERENCE PAPER BASELINE</div>
+              <div class="card-header">
+                <div class="model-title">Baseline System (Mohammad et al.)</div>
+                <div class="model-tech">Random Forest (URL & Domain Only - 14 features)</div>
+              </div>
+
+              <div class="model-prediction-row">
+                <div class="pred-label">Verdict:</div>
+                <div class="pred-tag" id="base-pred-tag">PHISHING</div>
+              </div>
+
+              <div class="prob-breakdown">
+                <div class="prob-row">
+                  <span>Phishing Probability:</span>
+                  <strong id="base-phish-prob">94.2%</strong>
+                </div>
+                <div class="prob-row">
+                  <span>Legitimacy Confidence:</span>
+                  <strong id="base-legit-prob">5.8%</strong>
+                </div>
+              </div>
+
+              <div class="model-features-note baseline-note">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                Blind to HTML form actions, iframe cloaking, and DOM anchor mismatches
+              </div>
+            </div>
+          </div>
+
+          <!-- Explainable AI & Security Attribution Section -->
+          <div class="glass-card">
+            <div class="card-header">
+              <h3 class="section-heading">Explainable AI: Security Attribution Breakdown</h3>
+              <p class="section-sub">Interpretable attribution mapping model predictions back to actionable cybersecurity risk factors.</p>
+            </div>
+
+            <div class="xai-grid">
+              <!-- Risk Factors Column -->
+              <div class="xai-col">
+                <h4 class="col-title critical-header">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                  Critical Risk Factors Detected
+                </h4>
+                <div id="risk-factors-list" class="factors-list"></div>
+              </div>
+
+              <!-- Mitigating / Safe Factors Column -->
+              <div class="xai-col">
+                <h4 class="col-title safe-header">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+                  Verified Safety Signals
+                </h4>
+                <div id="safe-factors-list" class="factors-list"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Full Extracted Feature Inspection Tree -->
+          <div class="glass-card">
+            <div class="card-header-flex">
+              <div>
+                <h3 class="section-heading">Extracted Multi-Modal Feature Vector</h3>
+                <p class="section-sub">Standardized features extracted and normalized for inference.</p>
+              </div>
+              <div id="continuous-stats-badge" class="continuous-badge"></div>
+            </div>
+
+            <div id="features-grid" class="features-grid"></div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- TAB 2: SCIENTIFIC BENCHMARKS & EVALUATION -->
+      <section id="benchmark-tab" class="tab-content">
+        
+        <div class="glass-card">
+          <div class="card-header">
+            <h2 class="section-heading">Empirical Research Comparison: Baseline vs Proposed System</h2>
+            <p class="section-sub">Experimental answer to the core research question: Evaluating detection power, false negative rate reduction, and zero-day unseen domain generalization.</p>
+          </div>
+
+          <!-- Top Stat Highlights -->
+          <div class="stats-highlight-grid">
+            <div class="stat-box">
+              <div class="stat-label">False Negative Rate (FNR) Reduction</div>
+              <div class="stat-number accent-green" id="fnr-reduction-stat">97.4%</div>
+              <div class="stat-sub">From 3.78% (Baseline) down to 0.10% (Proposed)</div>
+            </div>
+
+            <div class="stat-box">
+              <div class="stat-label">Zero-Day Domain CV Accuracy</div>
+              <div class="stat-number accent-cyan" id="cv-accuracy-stat">99.90%</div>
+              <div class="stat-sub">5-Fold Grouped Domain Cross-Validation</div>
+            </div>
+
+            <div class="stat-box">
+              <div class="stat-label">Brier Calibration Loss</div>
+              <div class="stat-number accent-indigo" id="brier-stat">0.0008</div>
+              <div class="stat-sub">True calibrated probabilistic risk output</div>
+            </div>
+
+            <div class="stat-box">
+              <div class="stat-label">Average Inference Latency</div>
+              <div class="stat-number accent-amber">0.03 ms</div>
+              <div class="stat-sub">High-throughput production grade</div>
+            </div>
+          </div>
+
+          <!-- Detailed Comparison Table -->
+          <div class="table-wrapper">
+            <table class="benchmark-table">
+              <thead>
+                <tr>
+                  <th>Model System</th>
+                  <th>Feature Modalities</th>
+                  <th>Accuracy</th>
+                  <th>Recall (Detection)</th>
+                  <th>FNR (Missed Phish)</th>
+                  <th>ROC-AUC</th>
+                  <th>Brier Score</th>
+                  <th>Latency</th>
+                </tr>
+              </thead>
+              <tbody id="benchmark-table-body">
+                <!-- Dynamically populated -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Visual Analytics Grid: ROC & Precision-Recall Curves -->
+        <div class="charts-grid">
+          <div class="glass-card chart-card">
+            <h3 class="chart-heading">Receiver Operating Characteristic (ROC Curve)</h3>
+            <p class="chart-sub">Comparing True Positive Rate vs False Positive Rate on unseen domain holdout test set.</p>
+            <div class="chart-canvas-wrapper">
+              <canvas id="roc-chart"></canvas>
+            </div>
+          </div>
+
+          <div class="glass-card chart-card">
+            <h3 class="chart-heading">Domain-Grouped Zero-Day Generalization</h3>
+            <p class="chart-sub">Comparing performance when evaluated strictly on unseen domain infrastructure.</p>
+            <div class="chart-canvas-wrapper">
+              <canvas id="generalization-chart"></canvas>
+            </div>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- TAB 3: MULTI-MODAL ARCHITECTURE -->
+      <section id="modalities-tab" class="tab-content">
+        <div class="glass-card">
+          <h2 class="section-heading">Multi-Modal Feature Engineering & Defense Taxonomy</h2>
+          <p class="section-sub">Why single-modality (URL-only) models fail against modern evasion and how multi-modal fusion creates unforgeable security invariants.</p>
+
+          <div class="modalities-grid">
+            
+            <div class="modality-card">
+              <div class="modality-icon" style="background: rgba(59, 130, 246, 0.15); color: #60a5fa;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+              </div>
+              <h3 class="modality-title">1. URL & Lexical Modality</h3>
+              <p class="modality-desc">Analyzes IP embeddings, character entropy, path depth, hyphen cloaking, and URL shortener redirection.</p>
+              <div class="modality-tag">14 Baseline Features</div>
+            </div>
+
+            <div class="modality-card">
+              <div class="modality-icon" style="background: rgba(16, 185, 129, 0.15); color: #34d399;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
+              </div>
+              <h3 class="modality-title">2. Domain & Network Modality</h3>
+              <p class="modality-desc">Evaluates DNS resolution, WHOIS registration longevity, age of domain, and search index crawl presence.</p>
+              <div class="modality-tag">DNS / WHOIS Verification</div>
+            </div>
+
+            <div class="modality-card">
+              <div class="modality-icon" style="background: rgba(245, 158, 11, 0.15); color: #fbbf24;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+              </div>
+              <h3 class="modality-title">3. HTML & DOM Structural Modality</h3>
+              <p class="modality-desc">Inspects Server Form Handlers (SFH), external anchor link ratios, invisible clickjacking iframes, and script obfuscation.</p>
+              <div class="modality-tag">12 Structural Features</div>
+            </div>
+
+            <div class="modality-card">
+              <div class="modality-icon" style="background: rgba(139, 92, 246, 0.15); color: #a78bfa;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              </div>
+              <h3 class="modality-title">4. Security & Certificate Modality</h3>
+              <p class="modality-desc">Verifies TLS/SSL certificate trust hierarchy, CA legitimacy, external backlink reputation, and traffic rank.</p>
+              <div class="modality-tag">4 Cryptographic Features</div>
+            </div>
+
+          </div>
+        </div>
+
+      </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <div>AegisPhish Research Framework &bull; Multi-Modal AI Detection Architecture &bull; Zero Domain Leakage Verified</div>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
