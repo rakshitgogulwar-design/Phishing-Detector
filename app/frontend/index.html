@@ -339,11 +339,75 @@
             </div>
           </div>
 
+          <!-- What is Phished in this URL? (Threat Diagnostics & Anatomy) -->
+          <div class="card threat-anatomy-card" id="url-threat-anatomy-card">
+            <div class="card-header">
+              <div class="card-title-group">
+                <h3 class="card-title">What is Phished in this URL? (Threat Diagnostics)</h3>
+                <span class="card-subtitle">Deconstructed anatomy of deceptive components, spoofed identities, and attack vectors</span>
+              </div>
+            </div>
+
+            <!-- Threat Assessment Diagnosis Banner -->
+            <div class="threat-diagnosis-banner" id="url-diagnosis-banner">
+              <div class="diag-icon" id="url-diag-icon">🛡️</div>
+              <div class="diag-content">
+                <strong id="url-diag-title">Threat Assessment:</strong>
+                <p id="url-diag-text">Evaluating URL deceptive characteristics...</p>
+              </div>
+            </div>
+
+            <!-- Visual URL Anatomy Bar -->
+            <div class="url-visual-anatomy" id="url-visual-anatomy">
+              <!-- Populated by renderUrlAnatomyBar() -->
+            </div>
+
+            <!-- Deconstructed Anatomy Grid -->
+            <div class="anatomy-grid">
+              <div class="anatomy-item">
+                <span class="anatomy-label">Targeted Brand:</span>
+                <span class="anatomy-value" id="anat-brand">--</span>
+              </div>
+              <div class="anatomy-item">
+                <span class="anatomy-label">True Registered Domain:</span>
+                <span class="anatomy-value font-mono" id="anat-domain">--</span>
+              </div>
+              <div class="anatomy-item">
+                <span class="anatomy-label">Subdomain Masking:</span>
+                <span class="anatomy-value font-mono" id="anat-subdomain">--</span>
+              </div>
+              <div class="anatomy-item">
+                <span class="anatomy-label">Protocol Security:</span>
+                <span class="anatomy-value" id="anat-protocol">--</span>
+              </div>
+              <div class="anatomy-item">
+                <span class="anatomy-label">TLD Extension:</span>
+                <span class="anatomy-value font-mono" id="anat-tld">--</span>
+              </div>
+              <div class="anatomy-item">
+                <span class="anatomy-label">Direct Numeric IP:</span>
+                <span class="anatomy-value" id="anat-ip">--</span>
+              </div>
+              <div class="anatomy-item anatomy-item-wide">
+                <span class="anatomy-label">Phishing Keywords Found in URL:</span>
+                <div class="anatomy-value" id="anat-keywords-container">--</div>
+              </div>
+            </div>
+          </div>
+
           <!-- Why Was This Detected? Checklist -->
           <div class="card checklist-card">
-            <div class="card-header">
-              <h3 class="card-title">Why Was This Detected? (Security Factor Checklist)</h3>
-              <span class="card-subtitle">Transparent indicators for cybersecurity students and practitioners</span>
+            <div class="card-header-flex">
+              <div>
+                <h3 class="card-title">Security Criteria Checklist (Why Was This Detected?)</h3>
+                <span class="card-subtitle">Exhaustive factor-by-factor security inspection results with detailed reasoning</span>
+              </div>
+              <div class="checklist-filter-pills" id="url-checklist-filters">
+                <button type="button" class="chk-filter active" data-filter="ALL" id="chk-filter-all">All (<span id="cnt-all">0</span>)</button>
+                <button type="button" class="chk-filter filter-fail" data-filter="FAIL" id="chk-filter-fail">❌ Failed (<span id="cnt-fail">0</span>)</button>
+                <button type="button" class="chk-filter filter-warn" data-filter="WARN" id="chk-filter-warn">⚠️ Warnings (<span id="cnt-warn">0</span>)</button>
+                <button type="button" class="chk-filter filter-pass" data-filter="PASS" id="chk-filter-pass">✅ Passed (<span id="cnt-pass">0</span>)</button>
+              </div>
             </div>
             <div class="checklist-grid" id="url-checklist-grid">
               <!-- Dynamically populated checklist items -->

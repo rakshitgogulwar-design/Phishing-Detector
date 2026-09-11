@@ -150,6 +150,52 @@ class HybridDetectionEngine:
         else:
             summary_reasons.append("Clean URL structure with authenticated domain and standard protocol.")
 
+        # Construct intuitive threat diagnostic explanation
+        threat_explanation = ""
+        if spoofed_brand:
+            threat_explanation = (
+                f"🚨 Critical Brand Impersonation Detected: This URL is actively spoofing {spoofed_brand.upper()}, "
+                f"but the registered root domain is actually '{rule_result['metrics'].get('domain', 'unknown')}'. "
+                f"Attackers use this technique to hijack login credentials."
+            )
+        elif rule_result["metrics"].get("is_raw_ip"):
+            threat_explanation = (
+                f"🚨 Direct Numeric IP Address Attack: The host '{rule_result['metrics'].get('hostname')}' bypasses "
+                f"standard DNS domain registration, a technique heavily associated with rogue malware or credential harvesting servers."
+            )
+        elif threat_intel.get("is_high_risk_tld"):
+            threat_explanation = (
+                f"⚠️ Suspicious Top-Level Domain (.{rule_result['metrics'].get('tld')}): The URL is hosted on an extension "
+                f"frequently exploited in automated disposable phishing campaigns."
+            )
+        elif rule_result["failed_indicators"]:
+            threat_explanation = (
+                f"⚠️ Suspicious URL Structure: Flagged {len(rule_result['failed_indicators'])} anomalous security indicator(s), "
+                f"including {rule_result['failed_indicators'][0]['indicator']}."
+            )
+        else:
+            threat_explanation = (
+                f"✅ Verified & Clean Infrastructure: The domain '{rule_result['metrics'].get('domain')}' displays authenticated "
+                f"domain ownership, standard encryption, and clean URL syntax."
+            )
+
+        url_breakdown = {
+            "protocol": "HTTPS (Encrypted TLS)" if rule_result["metrics"].get("is_https") else "HTTP (Unencrypted / Insecure)",
+            "hostname": rule_result["metrics"].get("hostname", ""),
+            "domain": rule_result["metrics"].get("domain", ""),
+            "subdomain": rule_result["metrics"].get("hostname", "").replace(rule_result["metrics"].get("domain", ""), "").rstrip(".") or "None (Apex Domain)",
+            "tld": "." + rule_result["metrics"].get("tld", ""),
+            "spoofed_brand": spoofed_brand.upper() if spoofed_brand else "None Detected",
+            "is_trusted": threat_intel.get("is_trusted", False),
+            "is_high_risk_tld": threat_intel.get("is_high_risk_tld", False),
+            "is_raw_ip": rule_result["metrics"].get("is_raw_ip", False),
+            "matched_keywords": rule_result["metrics"].get("matched_keywords", []),
+            "threat_diagnosis": threat_explanation,
+            "failed_count": len(rule_result["failed_indicators"]),
+            "warning_count": len(rule_result["warning_indicators"]),
+            "passed_count": len(rule_result["passed_indicators"])
+        }
+
         return {
             "status": status,
             "risk_tier": risk_tier,
@@ -157,6 +203,9 @@ class HybridDetectionEngine:
             "confidence": round(confidence, 2),
             "reasons": summary_reasons,
             "recommendation": recommendation,
+            "rule_score": round(rule_score, 1),
+            "ml_score": round(ml_score, 1),
+            "threat_intel_score": round(threat_score, 1),
             "components": {
                 "rule_score": round(rule_score, 1),
                 "ml_score": round(ml_score, 1),
@@ -167,7 +216,11 @@ class HybridDetectionEngine:
                     "threat_intel": round(self.w_intel, 2)
                 }
             },
+            "url_breakdown": url_breakdown,
             "checklist": rule_result["checklist"],
+            "failed_indicators": rule_result["failed_indicators"],
+            "warning_indicators": rule_result["warning_indicators"],
+            "passed_indicators": rule_result["passed_indicators"],
             "threat_intel": threat_intel,
             "metrics": rule_result["metrics"]
         }

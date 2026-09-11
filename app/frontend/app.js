@@ -1,4 +1,4 @@
-/**
+﻿/**
  * PhishGuard Enterprise Cybersecurity Platform
  * Frontend Controller (SPA)
  * 
@@ -18,6 +18,8 @@ let statsChartInstance = null;
 let lastUrlScanResult = null;
 let searchDebounceTimeout = null;
 let currentFilter = "";
+let currentChecklistItems = [];
+let currentChecklistFilter = "ALL";
 
 document.addEventListener("DOMContentLoaded", () => {
   initNavigation();
@@ -324,6 +326,17 @@ function initUrlScanner() {
       }
     });
   }
+
+  // Bind Checklist Criteria Filter Buttons
+  const filterBtns = document.querySelectorAll("#url-checklist-filters .chk-filter");
+  filterBtns.forEach(btn => {
+    btn.addEventListener("click", () => {
+      filterBtns.forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      currentChecklistFilter = btn.getAttribute("data-filter") || "ALL";
+      renderChecklist(currentChecklistItems, currentChecklistFilter);
+    });
+  });
 }
 
 async function loadPresets() {
@@ -435,22 +448,28 @@ function renderUrlResult(data) {
     );
   }
 
-  if (target) target.textContent = data.url;
+  // API returns 'target' field, not 'url'
+  const scannedUrl = data.target || data.url || "";
+  if (target) target.textContent = scannedUrl;
   if (meta) {
     const conf = Math.round((data.confidence || 0.95) * 100);
-    const latency = data.analysis_latency_ms || 12;
-    meta.textContent = `Confidence: ${conf}% | Latency: ${latency}ms | Model: Calibrated LightGBM`;
+    const latency = data.latency_ms || data.analysis_latency_ms || 12;
+    meta.textContent = `Confidence: ${conf}% | Latency: ${latency}ms | Model: Hybrid Fusion Engine`;
   }
   if (riskVal) riskVal.textContent = data.risk_score;
 
-  // Component Scores
+  // Component Scores (fallback safely to nested or top-level scores)
   const rulesVal = document.getElementById("comp-rules-val");
   const mlVal = document.getElementById("comp-ml-val");
   const intelVal = document.getElementById("comp-intel-val");
 
-  if (rulesVal) rulesVal.textContent = `${data.rule_score} / 100`;
-  if (mlVal) mlVal.textContent = `${data.ml_score} / 100`;
-  if (intelVal) intelVal.textContent = `${data.threat_intel_score} / 100`;
+  const rScore = Math.round(data.rule_score ?? (data.components ? data.components.rule_score : 0) ?? 0);
+  const mScore = Math.round(data.ml_score ?? (data.components ? data.components.ml_score : 0) ?? 0);
+  const iScore = Math.round(data.threat_intel_score ?? (data.components ? data.components.threat_intel_score : 0) ?? 0);
+
+  if (rulesVal) rulesVal.textContent = `${rScore} / 100`;
+  if (mlVal) mlVal.textContent = `${mScore} / 100`;
+  if (intelVal) intelVal.textContent = `${iScore} / 100`;
 
   // Recommendation
   const recBody = document.getElementById("url-rec-body");
@@ -462,29 +481,267 @@ function renderUrlResult(data) {
     recBody.textContent = data.recommendation || "Maintain standard cybersecurity hygiene.";
   }
 
-  // Checklist Grid
-  const grid = document.getElementById("url-checklist-grid");
-  if (grid) {
-    const checklist = data.checklist || [];
-    grid.innerHTML = checklist.map(item => {
-      const stateClass = item.status === "PASS" ? "pass" : item.status === "FAIL" ? "fail" : "warn";
-      const icon = item.status === "PASS" ? "✓" : item.status === "FAIL" ? "✗" : "!";
+  // Populate Threat Anatomy (What is Phished in this URL?)
+  const anatDiagBanner = document.getElementById("url-diagnosis-banner");
+  const anatDiagIcon = document.getElementById("url-diag-icon");
+  const anatDiagTitle = document.getElementById("url-diag-title");
+  const anatDiagText = document.getElementById("url-diag-text");
 
-      return `
-        <div class="checklist-item ${stateClass}">
-          <div class="chk-icon">${icon}</div>
-          <div class="chk-info">
-            <div class="chk-name">${escapeHtml(item.factor)}</div>
-            <div class="chk-detail">${escapeHtml(item.detail)}</div>
-          </div>
-          <div class="chk-status-badge ${stateClass}">${item.status}</div>
-        </div>
-      `;
-    }).join("");
+  const anatBrand = document.getElementById("anat-brand");
+  const anatDomain = document.getElementById("anat-domain");
+  const anatSubdomain = document.getElementById("anat-subdomain");
+  const anatProtocol = document.getElementById("anat-protocol");
+  const anatTld = document.getElementById("anat-tld");
+  const anatIp = document.getElementById("anat-ip");
+
+  const b = data.url_breakdown || {};
+  const metrics = data.metrics || {};
+  const tIntel = data.threat_intel || {};
+
+  const brandSpoofed = (b.spoofed_brand && b.spoofed_brand !== "None Detected") 
+    ? b.spoofed_brand 
+    : (tIntel.spoofed_brand ? tIntel.spoofed_brand.toUpperCase() : "None Detected");
+  const trueDomain = b.domain || metrics.domain || "Unknown";
+  const subDomain = b.subdomain || "None (Apex Domain)";
+  const proto = b.protocol || (metrics.is_https ? "HTTPS (Encrypted TLS)" : "HTTP (Unencrypted / Insecure)");
+  const tldVal = b.tld || ("." + (metrics.tld || ""));
+  const isIp = b.is_raw_ip || metrics.is_raw_ip;
+
+  if (anatBrand) {
+    if (brandSpoofed !== "None Detected") {
+      anatBrand.innerHTML = `<span class="badge badge.phishing text-red">🚨 SPOOFED: ${escapeHtml(brandSpoofed)}</span>`;
+    } else if (tIntel.is_trusted) {
+      anatBrand.innerHTML = `<span class="text-green font-bold">✓ Verified Authentic Authority</span>`;
+    } else {
+      anatBrand.innerHTML = `<span class="text-muted">Standard / Unbranded</span>`;
+    }
   }
+
+  if (anatDomain) {
+    anatDomain.innerHTML = escapeHtml(trueDomain) + (tIntel.is_trusted ? ` <span class="text-green text-sm">(Official Domain)</span>` : ` <span class="text-amber text-sm">(Unranked Third-Party)</span>`);
+  }
+
+  if (anatSubdomain) {
+    if (subDomain !== "None (Apex Domain)" && (subDomain.toLowerCase().includes("chase") || subDomain.toLowerCase().includes("paypal") || subDomain.toLowerCase().includes("login") || subDomain.toLowerCase().includes("verify") || subDomain.toLowerCase().includes("auth") || subDomain.split(".").length > 2)) {
+      anatSubdomain.innerHTML = `<span class="text-red font-mono">${escapeHtml(subDomain)}</span> <span class="badge badge.phishing text-sm">⚠️ CLOAKING</span>`;
+    } else {
+      anatSubdomain.textContent = subDomain;
+    }
+  }
+
+  if (anatProtocol) {
+    if (proto.includes("HTTPS")) {
+      anatProtocol.innerHTML = `<span class="text-green">🔒 ${escapeHtml(proto)}</span>`;
+    } else {
+      anatProtocol.innerHTML = `<span class="text-red font-bold">⚠️ ${escapeHtml(proto)}</span>`;
+    }
+  }
+
+  if (anatTld) {
+    if (tIntel.is_high_risk_tld || b.is_high_risk_tld) {
+      anatTld.innerHTML = `<span class="text-red font-bold">${escapeHtml(tldVal)}</span> <span class="badge badge.phishing text-sm">HIGH-ABUSE TLD</span>`;
+    } else {
+      anatTld.innerHTML = `<span class="text-green">${escapeHtml(tldVal)}</span> <span class="text-muted text-sm">(Standard)</span>`;
+    }
+  }
+
+  if (anatIp) {
+    anatIp.innerHTML = isIp 
+      ? `<span class="text-red font-bold">⚠️ Direct Numeric IP (${escapeHtml(metrics.hostname || "Bypass")})</span>` 
+      : `<span class="text-green">Standard DNS Host</span>`;
+  }
+
+  // Threat Diagnosis Banner
+  if (anatDiagBanner) {
+    anatDiagBanner.className = "threat-diagnosis-banner " + (
+      status === "SAFE" ? "safe" : (status === "SUSPICIOUS" ? "suspicious" : "phishing")
+    );
+  }
+  if (anatDiagIcon) {
+    anatDiagIcon.textContent = status === "SAFE" ? "🛡️" : (status === "SUSPICIOUS" ? "⚠️" : "🚨");
+  }
+  if (anatDiagTitle) {
+    anatDiagTitle.textContent = status === "SAFE" 
+      ? "Legitimate Infrastructure Verified:" 
+      : (status === "SUSPICIOUS" ? "Potential Threat / Anomaly Detected:" : "High-Confidence Phishing Attack Identified:");
+  }
+  if (anatDiagText) {
+    // Strip any garbled emoji prefix bytes if present, use clean text
+    let diagText = b.threat_diagnosis || (data.reasons ? data.reasons.join(" ") : "Evaluated multi-signal threat criteria.");
+    // Remove garbled bytes at start if any
+    diagText = diagText.replace(/^[^A-Za-z\u2600-\u26FF\u{1F000}-\u{1FFFF}🛡⚠🚨✅]*/u, "").trim();
+    anatDiagText.textContent = diagText;
+  }
+
+  // Render Visual URL Anatomy Bar (highlight suspicious segments)
+  renderUrlAnatomyBar(scannedUrl, data);
+
+  // Render Matched Keywords as Badges
+  renderMatchedKeywords(data);
+
+  // Populate Checklist Counters & Items
+  currentChecklistItems = data.checklist || [];
+  const allCnt = currentChecklistItems.length;
+  const failCnt = currentChecklistItems.filter(i => i.status === "FAIL").length;
+  const warnCnt = currentChecklistItems.filter(i => i.status === "WARN").length;
+  const passCnt = currentChecklistItems.filter(i => i.status === "PASS").length;
+
+  const cntAllEl = document.getElementById("cnt-all");
+  const cntFailEl = document.getElementById("cnt-fail");
+  const cntWarnEl = document.getElementById("cnt-warn");
+  const cntPassEl = document.getElementById("cnt-pass");
+
+  if (cntAllEl) cntAllEl.textContent = allCnt;
+  if (cntFailEl) cntFailEl.textContent = failCnt;
+  if (cntWarnEl) cntWarnEl.textContent = warnCnt;
+  if (cntPassEl) cntPassEl.textContent = passCnt;
+
+  // Render checklist with current filter
+  renderChecklist(currentChecklistItems, currentChecklistFilter);
 
   // Scroll to result smoothly
   card.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+/**
+ * Renders a visual color-coded URL anatomy bar that highlights suspicious segments.
+ */
+function renderUrlAnatomyBar(rawUrl, data) {
+  const container = document.getElementById("url-visual-anatomy");
+  if (!container || !rawUrl) return;
+
+  const b = data.url_breakdown || {};
+  const metrics = data.metrics || {};
+  const tIntel = data.threat_intel || {};
+  const status = data.status || "SAFE";
+
+  // Determine threat classifications for each segment
+  const isHttps = rawUrl.startsWith("https://");
+  const proto = isHttps ? "https://" : (rawUrl.startsWith("http://") ? "http://" : "");
+  const rest = rawUrl.slice(proto.length);
+  const slashIdx = rest.indexOf("/");
+  const hostPart = slashIdx >= 0 ? rest.slice(0, slashIdx) : rest;
+  const pathPart = slashIdx >= 0 ? rest.slice(slashIdx) : "";
+
+  // Score each part
+  const protoClass = isHttps ? "anat-safe" : "anat-danger";
+  const protoTip = isHttps ? "✅ HTTPS — Encrypted" : "❌ HTTP — No Encryption (Credential Risk)";
+
+  const hostClass = (tIntel.spoofed_brand || b.is_raw_ip) ? "anat-danger" :
+                    tIntel.is_high_risk_tld ? "anat-warning" :
+                    tIntel.is_trusted ? "anat-safe" : "anat-neutral";
+  const hostTip = tIntel.spoofed_brand ? `❌ Spoofed Brand: ${tIntel.spoofed_brand.toUpperCase()} — Fake Domain!` :
+                  b.is_raw_ip ? "❌ Raw IP — No DNS" :
+                  tIntel.is_high_risk_tld ? `⚠️ High-Abuse TLD — Common in Phishing` :
+                  tIntel.is_trusted ? "✅ Trusted Domain" : "ℹ️ Unverified Domain";
+
+  const pathClass = (metrics.matched_keywords && metrics.matched_keywords.length > 0 && !tIntel.is_trusted)
+    ? "anat-warning" : "anat-neutral";
+  const pathTip = (metrics.matched_keywords && metrics.matched_keywords.length > 0 && !tIntel.is_trusted)
+    ? `⚠️ Suspicious Keywords: ${metrics.matched_keywords.slice(0, 3).join(", ")}` : "ℹ️ URL Path";
+
+  container.innerHTML = `
+    <div class="url-bar-title">URL Anatomy Breakdown</div>
+    <div class="url-bar-wrap">
+      ${proto ? `<span class="url-seg ${protoClass}" title="${protoTip}">${escapeHtml(proto)}<span class="url-seg-label">${isHttps ? "SECURE" : "INSECURE"}</span></span>` : ""}
+      <span class="url-seg ${hostClass}" title="${hostTip}">${escapeHtml(hostPart)}<span class="url-seg-label">${tIntel.spoofed_brand ? "SPOOFED" : tIntel.is_trusted ? "TRUSTED" : tIntel.is_high_risk_tld ? "HIGH-RISK TLD" : "DOMAIN"}</span></span>
+      ${pathPart ? `<span class="url-seg ${pathClass}" title="${pathTip}">${escapeHtml(pathPart)}<span class="url-seg-label">${metrics.matched_keywords && metrics.matched_keywords.length > 0 && !tIntel.is_trusted ? "SUSPICIOUS PATH" : "PATH"}</span></span>` : ""}
+    </div>
+    <div class="url-bar-legend">
+      <span class="legend-item"><span class="legend-dot safe"></span>Safe</span>
+      <span class="legend-item"><span class="legend-dot warning"></span>Suspicious</span>
+      <span class="legend-item"><span class="legend-dot danger"></span>Dangerous</span>
+      <span class="legend-item"><span class="legend-dot neutral"></span>Neutral</span>
+    </div>
+  `;
+}
+
+/**
+ * Renders matched phishing keywords as visual badges.
+ */
+function renderMatchedKeywords(data) {
+  const container = document.getElementById("anat-keywords-container");
+  if (!container) return;
+
+  const metrics = data.metrics || {};
+  const tIntel = data.threat_intel || {};
+  const keywords = metrics.matched_keywords || [];
+
+  if (keywords.length === 0) {
+    container.innerHTML = `<span class="kw-badge safe-kw">None detected</span>`;
+    return;
+  }
+
+  const isTrusted = tIntel.is_trusted;
+  container.innerHTML = keywords.map(kw =>
+    `<span class="kw-badge ${isTrusted ? 'safe-kw' : 'danger-kw'}" title="Found in URL: &quot;${escapeHtml(kw)}&quot;">${escapeHtml(kw)}</span>`
+  ).join("");
+}
+
+function renderChecklist(items, filter) {
+  filter = filter || "ALL";
+  const grid = document.getElementById("url-checklist-grid");
+  if (!grid) return;
+
+  const filtered = filter === "ALL" ? items : items.filter(i => i.status === filter);
+
+  if (filtered.length === 0) {
+    grid.innerHTML = '<div style="padding:20px;text-align:center;color:#64748b">No criteria items matching the "' + filter + '" filter.</div>';
+    return;
+  }
+
+  // Known penalty weights for each indicator (mirrors url_analyzer.py)
+  const PENALTY_MAP = {
+    "Insecure HTTP Protocol": 15,
+    "Raw IP Address in Hostname": 35,
+    "Non-Standard Port": 20,
+    "Brand Impersonation / Typosquatting": 45,
+    "High-Abuse TLD": 22,
+    "URL Shortener Redirection Proxy": 20,
+    "Excessive Subdomain Levels": 18,
+    "Excessive URL Length": 12,
+    "Moderate URL Length": 5,
+    "@ Symbol in URL Authority": 30,
+    "Double Slash": 20,
+    "Credential & Security Keywords": 25,
+    "Hyphenated Root Domain": 8,
+    "High Digit Ratio": 12,
+    "High Shannon Entropy": 10,
+    "Redirect / Auth Query Parameter": 10,
+    "Heavy Hex / Percent Encoding": 12
+  };
+
+  grid.innerHTML = filtered.map(item => {
+    const status = (item.status || "PASS").toUpperCase();
+    const stateClass = status === "FAIL" ? "fail" : (status === "WARN" ? "warn" : "pass");
+    const icon = status === "PASS" ? "\u2713" : (status === "FAIL" ? "\u2717" : "\u26a0");
+    const title = item.indicator || item.factor || item.name || "Security Indicator";
+    const details = item.details || item.detail || item.description || "Evaluated against security baseline.";
+
+    // Find penalty for this indicator
+    const penaltyKey = Object.keys(PENALTY_MAP).find(k => title.startsWith(k));
+    const penalty = penaltyKey ? PENALTY_MAP[penaltyKey] : null;
+
+    let penaltyHtml = "";
+    if (status !== "PASS" && penalty) {
+      penaltyHtml = '<span class="chk-penalty ' + stateClass + '">+' + penalty + ' risk pts</span>';
+    } else if (status === "PASS") {
+      penaltyHtml = '<span class="chk-penalty pass-pts">\u2713 No penalty</span>';
+    }
+
+    return '<div class="check-item ' + stateClass + '">' +
+      '<div class="check-icon ' + stateClass + '">' + icon + '</div>' +
+      '<div class="check-info">' +
+        '<div class="check-header">' +
+          '<span class="check-indicator">' + escapeHtml(title) + '</span>' +
+          '<div class="chk-badges">' + penaltyHtml +
+            '<span class="check-status-badge ' + stateClass + '">' + status + '</span>' +
+          '</div>' +
+        '</div>' +
+        '<p class="check-details">' + escapeHtml(details) + '</p>' +
+      '</div>' +
+    '</div>';
+  }).join("");
 }
 
 function copyUrlReport() {
@@ -653,17 +910,22 @@ function renderMessageResult(data) {
   if (grid) {
     const checklist = data.checklist || [];
     grid.innerHTML = checklist.map(item => {
-      const stateClass = item.status === "PASS" ? "pass" : item.status === "FAIL" ? "fail" : "warn";
-      const icon = item.status === "PASS" ? "✓" : item.status === "FAIL" ? "✗" : "!";
+      const status = (item.status || "PASS").toUpperCase();
+      const stateClass = status === "FAIL" ? "fail" : (status === "WARN" ? "warn" : "pass");
+      const icon = status === "PASS" ? "✓" : (status === "FAIL" ? "✗" : "⚠");
+      const title = item.indicator || item.factor || item.name || "Communication Factor";
+      const details = item.details || item.detail || item.description || "Checked against social engineering patterns.";
 
       return `
-        <div class="checklist-item ${stateClass}">
-          <div class="chk-icon">${icon}</div>
-          <div class="chk-info">
-            <div class="chk-name">${escapeHtml(item.factor)}</div>
-            <div class="chk-detail">${escapeHtml(item.detail)}</div>
+        <div class="check-item ${stateClass}">
+          <div class="check-icon ${stateClass}">${icon}</div>
+          <div class="check-info">
+            <div class="check-header">
+              <span class="check-indicator">${escapeHtml(title)}</span>
+              <span class="check-status-badge ${stateClass}">${status}</span>
+            </div>
+            <p class="check-details">${escapeHtml(details)}</p>
           </div>
-          <div class="chk-status-badge ${stateClass}">${item.status}</div>
         </div>
       `;
     }).join("");
@@ -1155,3 +1417,4 @@ function escapeHtml(text) {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 }
+
